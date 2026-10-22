@@ -304,7 +304,7 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
     if (std::chrono::steady_clock::now() >= deadline)
       throw Error(ErrorCode::timeout,
                   "publisher timed out waiting for subscriber acknowledgement (ring full)");
-    std::this_thread::yield();
+    detail::cpu_relax();
   }
   auto &slot = impl_->slots()[(next - 1) & (h->capacity - 1)];
   slot.sequence = next;
