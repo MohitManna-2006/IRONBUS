@@ -12,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <sched.h>
+#include <signal.h>
 #include <string>
 #include <string_view>
 #include <sys/resource.h>
@@ -136,6 +137,19 @@ int main(int argc, char **argv) {
       } catch (...) {
         _exit(2);
       }
+    }
+    const auto join_deadline = Clock::now() + std::chrono::seconds(5);
+    while (creator.stats().registered_subscribers == 0 && Clock::now() < join_deadline) {
+      int child_status{};
+      const auto child_result = waitpid(child, &child_status, WNOHANG);
+      if (child_result == child)
+        throw std::runtime_error("subscriber exited before registering");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (creator.stats().registered_subscribers == 0) {
+      kill(child, SIGKILL);
+      (void)waitpid(child, nullptr, 0);
+      throw std::runtime_error("subscriber registration timed out");
     }
     pin_to_cpu(publisher_cpu);
     auto pub = ironbus::Bus::attach(n);
