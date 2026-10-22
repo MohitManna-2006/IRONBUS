@@ -115,8 +115,7 @@ std::size_t mapping_size(std::uint32_t capacity, std::uint32_t max_subscribers) 
                 "capacity must be a power of two between 2 and 1048576");
   }
   if (max_subscribers == 0 || max_subscribers > kMaxSubscribers)
-    throw Error(ErrorCode::invalid_argument,
-                "max_subscribers must be between 1 and 256");
+    throw Error(ErrorCode::invalid_argument, "max_subscribers must be between 1 and 256");
   return sizeof(Header) + static_cast<std::size_t>(max_subscribers) * sizeof(SubscriberEntry) +
          static_cast<std::size_t>(capacity) * sizeof(Slot);
 }
@@ -129,6 +128,8 @@ std::uint64_t minimum_acknowledged(Header *header, SubscriberEntry *subscribers)
     if (entry.metadata.state.load(std::memory_order_acquire) != kMemberRegistered)
       continue;
     const auto acknowledged = entry.acknowledged.value.load(std::memory_order_acquire);
+    if (acknowledged > header->published.value.load(std::memory_order_acquire))
+      throw Error(ErrorCode::incompatible_layout, "subscriber acknowledgement exceeds publication");
     if (!found || acknowledged < minimum)
       minimum = acknowledged;
     found = true;
@@ -199,9 +200,9 @@ void unlock_role(int fd, off_t offset) noexcept {
 
 class ScopedFileLock {
 public:
-  ScopedFileLock(int fd, off_t offset, std::string_view busy_message)
+  ScopedFileLock(int fd, off_t offset, std::string_view busy_message, bool wait = true)
       : fd_(fd), offset_(offset) {
-    lock_role(fd_, offset_, true, busy_message);
+    lock_role(fd_, offset_, wait, busy_message);
   }
   ~ScopedFileLock() {
     if (fd_ >= 0)
@@ -276,7 +277,7 @@ struct Bus::Impl {
   }
   SubscriberEntry *subscribers() const {
     return reinterpret_cast<SubscriberEntry *>(static_cast<std::byte *>(mapping) +
-                                                header->subscribers_offset);
+                                               header->subscribers_offset);
   }
 };
 
@@ -312,14 +313,15 @@ Bus Bus::create(std::string_view name, std::uint32_t capacity, std::uint32_t max
   h->max_subscribers = max_subscribers;
   h->total_size = bytes;
   h->subscribers_offset = sizeof(Header);
-  h->slots_offset = sizeof(Header) +
-                    static_cast<std::uint64_t>(max_subscribers) * sizeof(SubscriberEntry);
+  h->slots_offset =
+      sizeof(Header) + static_cast<std::uint64_t>(max_subscribers) * sizeof(SubscriberEntry);
   h->published.value.store(0, std::memory_order_relaxed);
   h->retention_watermark.value.store(0, std::memory_order_relaxed);
+  h->registered_subscribers.store(0, std::memory_order_relaxed);
   h->data_generation.value.store(0, std::memory_order_relaxed);
   h->space_generation.value.store(0, std::memory_order_relaxed);
   auto *entries = reinterpret_cast<SubscriberEntry *>(static_cast<std::byte *>(impl->mapping) +
-                                                       h->subscribers_offset);
+                                                      h->subscribers_offset);
   for (std::uint32_t i = 0; i < max_subscribers; ++i)
     new (&entries[i]) SubscriberEntry;
   h->state.store(kReady, std::memory_order_release);
@@ -346,8 +348,9 @@ Bus Bus::attach(std::string_view name) {
   impl->header = static_cast<Header *>(impl->mapping);
   auto *h = impl->header;
   if (!h->state.is_lock_free() || !h->membership_state.is_lock_free() ||
-      !h->published.value.is_lock_free() || !h->retention_watermark.value.is_lock_free() ||
-      !h->data_generation.value.is_lock_free() || !h->space_generation.value.is_lock_free())
+      !h->registered_subscribers.is_lock_free() || !h->published.value.is_lock_free() ||
+      !h->retention_watermark.value.is_lock_free() || !h->data_generation.value.is_lock_free() ||
+      !h->space_generation.value.is_lock_free())
     throw Error(ErrorCode::incompatible_layout, "required shared atomics are not lock-free");
   if (h->state.load(std::memory_order_acquire) != kReady)
     throw Error(ErrorCode::unsafe_initialization,
@@ -356,10 +359,10 @@ Bus Bus::attach(std::string_view name) {
       h->slot_size != sizeof(Slot) || h->total_size != impl->bytes || h->capacity < 2 ||
       h->capacity > kMaxCapacity || (h->capacity & (h->capacity - 1)) != 0 ||
       h->max_subscribers == 0 || h->max_subscribers > kMaxSubscribers ||
+      h->registered_subscribers.load(std::memory_order_acquire) > h->max_subscribers ||
       h->subscribers_offset != sizeof(Header) ||
-      h->slots_offset != sizeof(Header) +
-                              static_cast<std::uint64_t>(h->max_subscribers) *
-                                  sizeof(SubscriberEntry) ||
+      h->slots_offset != sizeof(Header) + static_cast<std::uint64_t>(h->max_subscribers) *
+                                              sizeof(SubscriberEntry) ||
       h->slots_offset + static_cast<std::uint64_t>(h->capacity) * sizeof(Slot) != impl->bytes ||
       h->membership_state.load(std::memory_order_acquire) > kMembershipSealed) {
     throw Error(ErrorCode::incompatible_layout, "shared-memory layout is incompatible or corrupt");
@@ -368,8 +371,9 @@ Bus Bus::attach(std::string_view name) {
   const auto published = h->published.value.load(std::memory_order_acquire);
   for (std::uint32_t i = 0; i < h->max_subscribers; ++i) {
     const auto member_state = entries[i].metadata.state.load(std::memory_order_acquire);
-    if (!entries[i].metadata.state.is_lock_free() || !entries[i].acknowledged.value.is_lock_free() ||
-        member_state > kMemberRegistered || entries[i].metadata.id_size > kSubscriberIdBytes ||
+    if (!entries[i].metadata.state.is_lock_free() ||
+        !entries[i].acknowledged.value.is_lock_free() || member_state > kMemberRegistered ||
+        entries[i].metadata.id_size > kSubscriberIdBytes ||
         (member_state == kMemberRegistered &&
          (entries[i].metadata.id_size == 0 ||
           entries[i].acknowledged.value.load(std::memory_order_acquire) > published)))
@@ -392,8 +396,19 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
     throw Error(ErrorCode::invalid_argument, "a role is already claimed by this handle");
   if (role == Role::publisher) {
     lock_role(impl_->fd, kPublisherLockOffset, false, "publisher role is already held");
-    impl_->role_claimed = true;
-    impl_->role = role;
+    try {
+      ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
+                              "unable to recover subscriber registry");
+      auto *entries = impl_->subscribers();
+      for (std::uint32_t i = 0; i < impl_->header->max_subscribers; ++i)
+        clear_incomplete_member(entries[i]);
+      reconcile_member_count(impl_->header, entries);
+      impl_->role_claimed = true;
+      impl_->role = role;
+    } catch (...) {
+      unlock_role(impl_->fd, kPublisherLockOffset);
+      throw;
+    }
     return;
   }
   if (role != Role::subscriber)
@@ -418,9 +433,8 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
       impl_->member_slot = i;
       impl_->member = &entries[i];
       const auto acknowledged = impl_->member->acknowledged.value.load(std::memory_order_acquire);
-      impl_->pending = acknowledged == std::numeric_limits<std::uint64_t>::max()
-                           ? 0
-                           : acknowledged + 1;
+      impl_->pending =
+          acknowledged == std::numeric_limits<std::uint64_t>::max() ? 0 : acknowledged + 1;
       impl_->role_claimed = true;
       impl_->role = Role::subscriber;
       return true;
@@ -446,9 +460,8 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
       entry.metadata.state.store(kMemberRegistered, std::memory_order_release);
       impl_->member_slot = i;
       impl_->member = &entry;
-      impl_->pending = start_sequence == std::numeric_limits<std::uint64_t>::max()
-                           ? 0
-                           : start_sequence + 1;
+      impl_->pending =
+          start_sequence == std::numeric_limits<std::uint64_t>::max() ? 0 : start_sequence + 1;
       impl_->role_claimed = true;
       impl_->role = Role::subscriber;
       return true;
@@ -459,11 +472,15 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
   {
     ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
                             "unable to serialize subscriber registration");
+    for (std::uint32_t i = 0; i < impl_->header->max_subscribers; ++i)
+      clear_incomplete_member(entries[i]);
+    reconcile_member_count(impl_->header, entries);
     if (bind_existing())
       return;
     if (impl_->header->membership_state.load(std::memory_order_acquire) == kMembershipOpen) {
       if (!register_new(0))
         throw Error(ErrorCode::subscriber_limit, "subscriber table is full");
+      reconcile_member_count(impl_->header, entries);
       return;
     }
   }
@@ -471,7 +488,7 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
   // A new identity joining a sealed roster starts at the current tail. Holding
   // the publisher lock makes that tail snapshot atomic with respect to publish.
   ScopedFileLock publisher(impl_->fd, kPublisherLockOffset,
-                           "new subscribers may join only while publisher is stopped");
+                           "new subscribers may join only while publisher is stopped", false);
   ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
                           "unable to serialize subscriber registration");
   if (bind_existing())
@@ -479,6 +496,7 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
   const auto tail = impl_->header->published.value.load(std::memory_order_acquire);
   if (!register_new(tail))
     throw Error(ErrorCode::subscriber_limit, "subscriber table is full");
+  reconcile_member_count(impl_->header, entries);
   impl_->header->space_generation.value.fetch_add(1, std::memory_order_release);
   detail::futex_wake_one(impl_->header->space_generation.value);
 }
@@ -491,9 +509,8 @@ void Bus::forget_subscriber(std::string_view subscriber_id) {
                 "forget_subscriber requires a handle without a claimed role");
   validate_subscriber_id(subscriber_id);
   ScopedFileLock publisher(impl_->fd, kPublisherLockOffset,
-                           "stop the publisher before forgetting a subscriber");
-  ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
-                          "unable to serialize subscriber removal");
+                           "stop the publisher before forgetting a subscriber", false);
+  ScopedFileLock registry(impl_->fd, kRegistryLockOffset, "unable to serialize subscriber removal");
   auto *entries = impl_->subscribers();
   for (std::uint32_t i = 0; i < impl_->header->max_subscribers; ++i) {
     auto &entry = entries[i];
@@ -501,10 +518,11 @@ void Bus::forget_subscriber(std::string_view subscriber_id) {
     if (!matches_id(entry.metadata, subscriber_id))
       continue;
     ScopedFileLock member(impl_->fd, kSubscriberLockBase + static_cast<off_t>(i),
-                          "stop the subscriber before forgetting its identity");
+                          "stop the subscriber before forgetting its identity", false);
     entry.metadata.state.store(kMemberFree, std::memory_order_release);
     entry.metadata.id_size = 0;
     std::memset(entry.metadata.id, 0, sizeof(entry.metadata.id));
+    reconcile_member_count(impl_->header, entries);
     const auto minimum = minimum_acknowledged(impl_->header, entries);
     impl_->header->retention_watermark.value.store(minimum, std::memory_order_release);
     return;
@@ -541,7 +559,7 @@ Stats Bus::stats() const {
           minimum_acknowledged(h, entries),
           h->capacity,
           h->slot_size,
-          registered_member_count(h, entries),
+          h->registered_subscribers.load(std::memory_order_acquire),
           h->membership_state.load(std::memory_order_acquire) == kMembershipSealed};
 }
 std::uint32_t Bus::capacity() const {
@@ -560,7 +578,10 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
                             "unable to seal subscriber membership before publish");
     if (h->membership_state.load(std::memory_order_acquire) == kMembershipOpen) {
       auto *entries = impl_->subscribers();
-      if (registered_member_count(h, entries) == 0)
+      for (std::uint32_t i = 0; i < h->max_subscribers; ++i)
+        clear_incomplete_member(entries[i]);
+      reconcile_member_count(h, entries);
+      if (h->registered_subscribers.load(std::memory_order_acquire) == 0)
         throw Error(ErrorCode::no_subscribers,
                     "register at least one subscriber before publishing the first message");
       const auto minimum = minimum_acknowledged(h, entries);
@@ -572,6 +593,9 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
   if (published == std::numeric_limits<std::uint64_t>::max())
     throw Error(ErrorCode::system, "sequence space exhausted");
   const auto next = published + 1;
+  if (h->registered_subscribers.load(std::memory_order_acquire) == 0)
+    throw Error(ErrorCode::no_subscribers,
+                "publishing requires at least one registered subscriber");
   auto retained = h->retention_watermark.value.load(std::memory_order_acquire);
   while (next - retained > h->capacity) {
     const auto observed_minimum = minimum_acknowledged(h, impl_->subscribers());
