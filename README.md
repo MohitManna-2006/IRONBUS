@@ -67,13 +67,13 @@ The executable communicates **between actual processes** (not threads in a singl
 ./build/ironbus_bench 1000000 4096 64
 ```
 
-The harness launches independent publisher and subscriber processes. It reports messages per second and **publisher-observed publish-to-ACK completion latency** (p50, p99, p99.9) using `steady_clock`, plus combined user and system CPU time from `getrusage`. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` when per-process CPU accounting is useful. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
+The harness launches one publisher and a configurable fanout of independent subscriber processes. It reports messages per second and **publisher-observed publish-to-all-ACK completion latency** (p50, p99, p99.9) using `steady_clock`, plus combined user and system CPU time from `getrusage`. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` when per-process CPU accounting is useful. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
 
 The benchmark accepts endpoint wait policies, a bounded spin count, and optional Linux CPU indices (`none` leaves scheduling unchanged):
 
 ```bash
-./build/ironbus_bench 100000 1024 64 futex adaptive 1000 none none
-./scripts/bench-strategies.sh 100000 1024 64 1000
+./build/ironbus_bench 100000 1024 64 futex adaptive 1000 none none 8
+./scripts/bench-strategies.sh 100000 1024 64 1000 8
 ```
 
 The comparison script runs the same workload under `/usr/bin/time -v`; it does not control system load or pin endpoints. For explicit pinning, pass publisher and subscriber CPU indices as the final two benchmark arguments. Each process reports combined user and system CPU time from `getrusage`.

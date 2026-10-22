@@ -84,8 +84,9 @@ double cpu_seconds(const rusage &usage) {
 } // namespace
 int main(int argc, char **argv) {
   auto n = "bench_" + std::to_string(getpid());
+  std::vector<pid_t> children;
   try {
-    if (argc > 9)
+    if (argc > 10)
       throw std::runtime_error("too many benchmark arguments");
     auto count = argc > 1 ? arg(argv, 1, 100000) : 100000;
     auto raw_capacity = argc > 2 ? arg(argv, 2, 1024) : 1024;
@@ -93,17 +94,20 @@ int main(int argc, char **argv) {
     ironbus::WaitStrategy publisher_strategy{};
     ironbus::WaitStrategy subscriber_strategy{};
     auto raw_spin_count = argc > 6 ? arg(argv, 6, 1000) : 1000;
+    auto raw_fanout = argc > 9 ? arg(argv, 9, 1) : 1;
     if (raw_capacity > std::numeric_limits<std::uint32_t>::max() ||
-        raw_payload_size > std::numeric_limits<std::uint32_t>::max() || raw_spin_count > 10'000'000)
-      throw std::runtime_error("capacity, payload, or spin count is out of supported range");
+        raw_payload_size > std::numeric_limits<std::uint32_t>::max() ||
+        raw_spin_count > 10'000'000 || raw_fanout == 0 || raw_fanout > 256)
+      throw std::runtime_error("capacity, payload, spin count, or fanout is out of range");
     auto capacity = static_cast<std::uint32_t>(raw_capacity);
     auto payload_size = static_cast<std::uint32_t>(raw_payload_size);
     auto spin_count = static_cast<std::uint32_t>(raw_spin_count);
+    auto fanout = static_cast<std::uint32_t>(raw_fanout);
     std::optional<int> publisher_cpu, subscriber_cpu;
     if (count == 0 || payload_size < 8 || payload_size > ironbus::kPayloadBytes) {
       std::cerr
           << "usage: ironbus_bench [count] [capacity] [payload] [pub-strategy] [sub-strategy] "
-             "[spin-count] [pub-cpu|none] [sub-cpu|none]\n";
+             "[spin-count] [pub-cpu|none] [sub-cpu|none] [subscriber-count]\n";
       return 2;
     }
     struct utsname environment {};
@@ -117,40 +121,46 @@ int main(int argc, char **argv) {
     subscriber_cpu = cpu_arg(argv, 8);
     validate_cpu(publisher_cpu);
     validate_cpu(subscriber_cpu);
-    auto creator = ironbus::Bus::create(n, capacity);
-    auto child = fork();
-    if (child < 0)
-      throw std::runtime_error("fork failed");
-    if (child == 0) {
-      try {
-        pin_to_cpu(subscriber_cpu);
-        auto sub = ironbus::Bus::attach(n);
-        sub.set_wait_strategy(subscriber_strategy, spin_count);
-        sub.claim(ironbus::Role::subscriber);
-        for (std::uint64_t i = 0; i < count; ++i) {
-          auto m = sub.receive(std::chrono::seconds(60));
-          // The subscriber performs the normal copy and ACK path. The
-          // publisher records its observed ACK completion time.
-          sub.acknowledge(m.sequence);
+    auto creator = ironbus::Bus::create(n, capacity, fanout);
+    for (std::uint32_t index = 0; index < fanout; ++index) {
+      auto child = fork();
+      if (child < 0)
+        throw std::runtime_error("fork failed");
+      if (child == 0) {
+        try {
+          pin_to_cpu(subscriber_cpu);
+          auto sub = ironbus::Bus::attach(n);
+          sub.set_wait_strategy(subscriber_strategy, spin_count);
+          const auto id = "bench-" + std::to_string(index);
+          sub.claim(ironbus::Role::subscriber, id);
+          for (std::uint64_t i = 0; i < count; ++i) {
+            auto m = sub.receive(std::chrono::seconds(60));
+            // Every process copies and ACKs the same broadcast sequence.
+            sub.acknowledge(m.sequence);
+          }
+          _exit(0);
+        } catch (...) {
+          _exit(2);
         }
-        _exit(0);
-      } catch (...) {
-        _exit(2);
       }
+      children.push_back(child);
     }
     const auto join_deadline = Clock::now() + std::chrono::seconds(5);
-    while (creator.stats().registered_subscribers == 0 && Clock::now() < join_deadline) {
-      int child_status{};
-      const auto child_result = waitpid(child, &child_status, WNOHANG);
-      if (child_result == child)
-        throw std::runtime_error("subscriber exited before registering");
+    while (creator.stats().registered_subscribers < fanout && Clock::now() < join_deadline) {
+      for (auto &child : children) {
+        if (child == 0)
+          continue;
+        int child_status{};
+        const auto child_result = waitpid(child, &child_status, WNOHANG);
+        if (child_result == child) {
+          child = 0;
+          throw std::runtime_error("subscriber exited before registering");
+        }
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (creator.stats().registered_subscribers == 0) {
-      kill(child, SIGKILL);
-      (void)waitpid(child, nullptr, 0);
+    if (creator.stats().registered_subscribers != fanout)
       throw std::runtime_error("subscriber registration timed out");
-    }
     pin_to_cpu(publisher_cpu);
     auto pub = ironbus::Bus::attach(n);
     pub.set_wait_strategy(publisher_strategy, spin_count);
@@ -169,12 +179,17 @@ int main(int argc, char **argv) {
       latency.push_back(stamp() - sent);
     }
     auto elapsed = std::chrono::duration<double>(Clock::now() - begin).count();
-    int status{};
-    struct rusage child_usage {};
-    if (wait4(child, &status, 0, &child_usage) < 0)
-      throw std::runtime_error("wait4 failed");
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-      throw std::runtime_error("subscriber benchmark process failed");
+    double readers_cpu_seconds = 0;
+    for (auto &child : children) {
+      int status{};
+      struct rusage child_usage {};
+      if (wait4(child, &status, 0, &child_usage) < 0)
+        throw std::runtime_error("wait4 failed");
+      child = 0;
+      if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        throw std::runtime_error("subscriber benchmark process failed");
+      readers_cpu_seconds += cpu_seconds(child_usage);
+    }
     std::sort(latency.begin(), latency.end());
     auto percentile = [&](double p) {
       return latency[static_cast<std::size_t>(p * static_cast<double>(latency.size() - 1))];
@@ -186,7 +201,8 @@ int main(int argc, char **argv) {
         << "messages=" << count << " payload_bytes=" << payload_size << " capacity=" << capacity
         << " system=" << environment.sysname << " kernel=" << environment.release
         << " machine=" << environment.machine
-        << " logical_cpus=" << std::thread::hardware_concurrency() << " publisher_strategy="
+        << " logical_cpus=" << std::thread::hardware_concurrency() << " subscriber_count=" << fanout
+        << " publisher_strategy="
         << (publisher_strategy == ironbus::WaitStrategy::busy_poll ? "busy"
             : publisher_strategy == ironbus::WaitStrategy::futex   ? "futex"
                                                                    : "adaptive")
@@ -202,9 +218,15 @@ int main(int argc, char **argv) {
         << " messages_per_second=" << static_cast<double>(count) / elapsed
         << " publisher_to_ack_observed_ns_p50=" << percentile(.50) << " p99=" << percentile(.99)
         << " p999=" << percentile(.999)
-        << " combined_cpu_seconds=" << cpu_seconds(parent_usage) + cpu_seconds(child_usage) << '\n';
+        << " combined_cpu_seconds=" << cpu_seconds(parent_usage) + readers_cpu_seconds << '\n';
     ironbus::Bus::unlink(n);
   } catch (const std::exception &e) {
+    for (auto child : children) {
+      if (child > 0) {
+        kill(child, SIGKILL);
+        (void)waitpid(child, nullptr, 0);
+      }
+    }
     try {
       ironbus::Bus::unlink(n);
     } catch (...) {
