@@ -128,7 +128,7 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 
 - **Phase 0: Foundation (complete)** — C++20/CMake layout, strict warnings, Linux CI, sanitizer option, developer container, and engineering docs. Linux x86-64 build and tests passed.
 - **Phase 1: Correct SPSC shared-memory IPC (complete)** — POSIX shared memory, fixed slots, acquire/release cursors, bounded backpressure, role locks, crash/redelivery behavior, CLI, subprocess tests, and an initial benchmark. All documented acceptance tests passed on Linux x86-64.
-- **Phase 2: Wakeup strategies and polling (implementation in progress)** — bounded busy polling, Linux process-shared futex waits, and adaptive spin-then-futex are implemented. Acceptance and benchmark characterization remain in progress.
+- **Phase 2: Wakeup strategies and polling (complete)** — per-endpoint busy, Linux process-shared futex, and bounded adaptive spin-then-futex policies; CI acceptance passed.
 - **Phase 3: Multi-consumer architecture** — specify per-subscriber cursors, admission, backpressure, and abandoned-subscriber reclamation before implementation.
 - **Phase 4: Failure recovery and lifecycle hardening** — fault injection, initialization/lifecycle hardening, operational inspection, and explicit recovery policy.
 - **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
