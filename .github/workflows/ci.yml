@@ -1,0 +1,19 @@
+name: Linux CI
+on:
+  push:
+  pull_request:
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Configure sanitizer build
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DIRONBUS_ENABLE_SANITIZERS=ON
+      - name: Build and test sanitizers
+        run: cmake --build build-asan --parallel 2 && ctest --test-dir build-asan --output-on-failure
