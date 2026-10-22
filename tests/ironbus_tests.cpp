@@ -190,11 +190,14 @@ void publisher_process_restart(const std::string &exe) {
   auto n = name("pub_restart");
   Cleanup cleanup{n};
   auto creator = ironbus::Bus::create(n, 8);
-  auto first = spawn(exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000"});
+  auto first = spawn(
+      exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000", "--strategy", "futex"});
   check(wait_bounded(first, 4s) == 0, "first publisher process exits cleanly");
-  auto second = spawn(exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000"});
+  auto second = spawn(
+      exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000", "--strategy", "futex"});
   check(wait_bounded(second, 4s) == 0, "publisher process restarts and resumes");
-  auto sub = spawn(exe, {"sub", "--name", n, "--count", "8", "--timeout-ms", "2000"});
+  auto sub = spawn(
+      exe, {"sub", "--name", n, "--count", "8", "--timeout-ms", "2000", "--strategy", "futex"});
   check(wait_bounded(sub, 4s) == 0, "subscriber validates sequences across publisher restart");
   check(creator.stats().published == 8 && creator.stats().acknowledged == 8,
         "publisher restart preserves cursors");
