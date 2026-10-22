@@ -62,6 +62,37 @@ struct Cleanup {
   }
 };
 
+void wait_policy_configuration() {
+  auto n = name("wait_policy");
+  Cleanup cleanup{n};
+  auto bus = ironbus::Bus::create(n, 2);
+  bus.set_wait_strategy(ironbus::WaitStrategy::futex);
+  check(bus.wait_strategy() == ironbus::WaitStrategy::futex,
+        "wait policy selection persists on handle");
+  bool bad_budget = false;
+  try {
+    bus.set_wait_strategy(ironbus::WaitStrategy::adaptive, 10'000'001);
+  } catch (const ironbus::Error &e) {
+    bad_budget = e.code() == ironbus::ErrorCode::invalid_argument;
+  }
+  check(bad_budget, "unbounded adaptive spin budget rejected");
+  bool bad_policy = false;
+  try {
+    bus.set_wait_strategy(static_cast<ironbus::WaitStrategy>(99));
+  } catch (const ironbus::Error &e) {
+    bad_policy = e.code() == ironbus::ErrorCode::invalid_argument;
+  }
+  check(bad_policy, "unknown wait policy rejected");
+  bus.claim(ironbus::Role::publisher);
+  bool late_change = false;
+  try {
+    bus.set_wait_strategy(ironbus::WaitStrategy::busy_poll);
+  } catch (const ironbus::Error &e) {
+    late_change = e.code() == ironbus::ErrorCode::invalid_argument;
+  }
+  check(late_change, "role policy immutable after claim");
+}
+
 void basic_and_restart() {
   auto n = name("basic");
   Cleanup cleanup{n};
@@ -208,6 +239,7 @@ int main(int argc, char **argv) {
   try {
     if (argc != 2)
       throw std::runtime_error("expected CLI executable path");
+    wait_policy_configuration();
     basic_and_restart();
     process_attach_and_roles(argv[1]);
     publisher_process_restart(argv[1]);
