@@ -51,6 +51,8 @@ struct Stats {
 };
 
 enum class Role { publisher, subscriber };
+// Process-local waiting policy. Futex mode relies on Linux shared mappings and
+// lock-free 32-bit atomics; adaptive mode spins for a bounded check count.
 enum class WaitStrategy { busy_poll, futex, adaptive };
 
 class Bus final {
