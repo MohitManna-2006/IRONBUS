@@ -201,19 +201,22 @@ void publisher_process_restart(const std::string &exe) {
 
 void wait_strategy_processes(const std::string &exe) {
   const char *strategies[] = {"busy", "futex", "adaptive"};
-  for (const auto *strategy : strategies) {
-    auto n = name(strategy);
-    Cleanup cleanup{n};
-    auto creator = ironbus::Bus::create(n, 8);
-    auto sub = spawn(exe, {"sub", "--name", n, "--count", "64", "--timeout-ms", "3000",
-                           "--strategy", strategy, "--spin-count", "32"});
-    std::this_thread::sleep_for(40ms);
-    auto pub = spawn(exe, {"pub", "--name", n, "--count", "64", "--timeout-ms", "3000",
-                           "--strategy", strategy, "--spin-count", "32"});
-    check(wait_bounded(pub, 5s) == 0, "publisher completes with selected wait strategy");
-    check(wait_bounded(sub, 5s) == 0, "subscriber completes with selected wait strategy");
-    check(creator.stats().published == 64 && creator.stats().acknowledged == 64,
-          "wait strategy preserves all messages through repeated ring wraparound");
+  std::uint32_t case_number = 0;
+  for (const auto *publisher_strategy : strategies) {
+    for (const auto *subscriber_strategy : strategies) {
+      auto n = name(("wait_matrix_" + std::to_string(case_number++)).c_str());
+      Cleanup cleanup{n};
+      auto creator = ironbus::Bus::create(n, 8);
+      auto sub = spawn(exe, {"sub", "--name", n, "--count", "64", "--timeout-ms", "3000",
+                             "--strategy", subscriber_strategy, "--spin-count", "32"});
+      std::this_thread::sleep_for(40ms);
+      auto pub = spawn(exe, {"pub", "--name", n, "--count", "64", "--timeout-ms", "3000",
+                             "--strategy", publisher_strategy, "--spin-count", "32"});
+      check(wait_bounded(pub, 5s) == 0, "publisher completes with selected wait strategy");
+      check(wait_bounded(sub, 5s) == 0, "subscriber completes with selected wait strategy");
+      check(creator.stats().published == 64 && creator.stats().acknowledged == 64,
+            "wait policy pair preserves messages through ring wraparound");
+    }
   }
 }
 
