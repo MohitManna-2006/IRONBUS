@@ -36,6 +36,8 @@ Futex calls use process-shared operations, never `FUTEX_PRIVATE_FLAG`. Relative 
 
 Adaptive spinning has a finite configurable budget per wait operation. Once consumed, that wait blocks in the kernel until an event or deadline. Busy mode remains bounded by its caller-provided timeout, but may consume CPU for the full interval. Stalled endpoints do not acquire automatic takeover; Phase 1 role locks still define ownership.
 
+A process can die between publishing its sequence and issuing the wake syscall, or between acknowledging and waking the publisher. The release-stored cursor is still committed. A waiter with a finite deadline eventually returns its timeout, and a restarted endpoint recovers from the committed cursor; this milestone does not promise immediate crash notification or automatic role takeover. Applications should treat an error returned after a committed operation with care and inspect the persisted sequence before retrying. The futex wake operation only wakes a waiter and never changes delivery state.
+
 A 32-bit generation can wrap. Correctness does not depend on it being globally unique: the waiter always rechecks the 64-bit sequence predicate before sleeping and after waking. At the generation wrap boundary, the futex comparison still protects the immediate wait transition; sequence exhaustion remains separately rejected by the ring protocol.
 
 ## CPU affinity
