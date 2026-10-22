@@ -15,7 +15,12 @@
 
 ## Phase 2: Wakeup strategies and polling
 
-Compare bounded busy polling with Linux futex wakeups. Record CPU and latency effects before selecting defaults.
+- Add process-shared Linux futex wait/wake with separate data and space generations while keeping the 64-bit sequence cursors authoritative.
+- Expose busy polling, futex waiting, and bounded-spin adaptive waiting per endpoint. Preserve finite timeout behavior and reject unsafe layouts.
+- Add optional benchmark CPU affinity and comparisons that record throughput, publish-to-ACK p50/p99/p99.9, CPU time where available, and environment.
+- Acceptance: all Phase 1 tests pass under each wait policy; futex race, timeout, recovery, and role tests pass; release and sanitizer CI pass on native Linux x86-64.
+
+See [PHASE2_DESIGN.md](PHASE2_DESIGN.md) for the wait protocol and failure analysis. Mark Phase 2 complete only after the acceptance checks pass.
 
 ## Phase 3: Multi-consumer architecture
 
