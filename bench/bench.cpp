@@ -55,6 +55,16 @@ std::optional<int> cpu_arg(char **argv, int i) {
     throw std::runtime_error("CPU index exceeds CPU_SETSIZE");
   return static_cast<int>(cpu);
 }
+void validate_cpu(std::optional<int> cpu) {
+  if (!cpu)
+    return;
+  cpu_set_t allowed;
+  CPU_ZERO(&allowed);
+  if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0)
+    throw std::runtime_error("sched_getaffinity failed while validating requested CPUs");
+  if (!CPU_ISSET(static_cast<std::size_t>(*cpu), &allowed))
+    throw std::runtime_error("requested CPU is outside the current process affinity mask");
+}
 void pin_to_cpu(std::optional<int> cpu) {
   if (!cpu)
     return;
@@ -104,6 +114,8 @@ int main(int argc, char **argv) {
     subscriber_strategy = strategy(argc > 5 ? argv[5] : nullptr);
     publisher_cpu = cpu_arg(argv, 7);
     subscriber_cpu = cpu_arg(argv, 8);
+    validate_cpu(publisher_cpu);
+    validate_cpu(subscriber_cpu);
     auto creator = ironbus::Bus::create(n, capacity);
     auto child = fork();
     if (child < 0)
