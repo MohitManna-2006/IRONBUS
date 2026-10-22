@@ -316,6 +316,20 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
   return next;
 }
 
+void Bus::wait_for_acknowledgement(std::uint64_t sequence, std::chrono::milliseconds timeout) {
+  if (!impl_ || !impl_->role_claimed || impl_->role != Role::publisher)
+    throw Error(ErrorCode::invalid_argument,
+                "publisher role must be claimed before waiting for acknowledgement");
+  if (sequence == 0 || sequence > impl_->header->published.value.load(std::memory_order_acquire))
+    throw Error(ErrorCode::invalid_argument, "cannot wait for an unpublished sequence");
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  auto *h = impl_->header;
+  wait_for_predicate(
+      impl_->wait_strategy, impl_->spin_budget, h->space_generation.value, deadline,
+      [&] { return h->acknowledged.value.load(std::memory_order_acquire) >= sequence; },
+      "publisher timed out waiting for message acknowledgement");
+}
+
 Message Bus::receive(std::chrono::milliseconds timeout) {
   if (!impl_ || !impl_->role_claimed || impl_->role != Role::subscriber)
     throw Error(ErrorCode::invalid_argument, "subscriber role must be claimed before receiving");

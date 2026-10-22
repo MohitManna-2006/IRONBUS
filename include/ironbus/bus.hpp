@@ -77,6 +77,9 @@ public:
   // Publish waits up to timeout for space. No allocation is performed on the
   // successful hot path. Throws Error(timeout) if backpressure persists.
   std::uint64_t publish(std::span<const std::byte> payload, std::chrono::milliseconds timeout);
+  // Wait until the subscriber has acknowledged sequence, using this handle's
+  // configured wait policy. Useful when an application requires completion.
+  void wait_for_acknowledgement(std::uint64_t sequence, std::chrono::milliseconds timeout);
   // Receive copies the next unacknowledged message. Repeated receive before
   // acknowledge returns the same message.
   Message receive(std::chrono::milliseconds timeout);
