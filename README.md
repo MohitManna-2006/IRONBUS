@@ -4,7 +4,7 @@
 
 A Linux x86-64, C++20, cross-process shared-memory messaging system.
 
-> **Status: Phases 0–2 complete; Phase 3 broadcast SPMC is implemented and awaiting native Linux release and sanitizer CI acceptance.** Local x86-64 Docker-emulated release tests pass. Broker discovery and zero-copy payload views are not implemented.
+> **Status: Phases 0–3 complete.** Phase 3 broadcast SPMC passed native Linux x86-64 Release and ASan/UBSan CI. Broker discovery and zero-copy payload views are not implemented.
 
 ## Why this exists
 
@@ -130,7 +130,7 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 - **Phase 0: Foundation (complete)** — C++20/CMake layout, strict warnings, Linux CI, sanitizer option, developer container, and engineering docs. Linux x86-64 build and tests passed.
 - **Phase 1: Correct SPSC shared-memory IPC (complete)** — POSIX shared memory, fixed slots, acquire/release cursors, bounded backpressure, role locks, crash/redelivery behavior, CLI, subprocess tests, and an initial benchmark. All documented acceptance tests passed on Linux x86-64.
 - **Phase 2: Wakeup strategies and polling (complete)** — per-endpoint busy, Linux process-shared futex, and bounded adaptive spin-then-futex policies; CI acceptance passed.
-- **Phase 3: Multi-consumer architecture (implementation complete; native CI gate pending)** — bounded broadcast SPMC, stable per-subscriber cursors, admission and explicit quiescent removal. See [PHASE3_DESIGN.md](docs/PHASE3_DESIGN.md).
+- **Phase 3: Multi-consumer architecture (complete)** — bounded broadcast SPMC, stable per-subscriber cursors, admission and explicit quiescent removal. Native Linux x86-64 Release and ASan/UBSan CI passed. See [PHASE3_DESIGN.md](docs/PHASE3_DESIGN.md).
 - **Phase 4: Failure recovery and lifecycle hardening** — fault injection, initialization/lifecycle hardening, operational inspection, and explicit recovery policy.
 - **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
 - **Phase 6: Market-data integration** — typed market-data examples and integrations after transport and schema contracts stabilize.
