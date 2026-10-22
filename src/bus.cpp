@@ -368,6 +368,7 @@ Bus Bus::attach(std::string_view name) {
     throw Error(ErrorCode::incompatible_layout, "shared-memory layout is incompatible or corrupt");
   }
   auto *entries = impl->subscribers();
+  ScopedFileLock registry(impl->fd, kRegistryLockOffset, "unable to validate subscriber registry");
   const auto published = h->published.value.load(std::memory_order_acquire);
   for (std::uint32_t i = 0; i < h->max_subscribers; ++i) {
     const auto member_state = entries[i].metadata.state.load(std::memory_order_acquire);
@@ -520,8 +521,6 @@ void Bus::forget_subscriber(std::string_view subscriber_id) {
     ScopedFileLock member(impl_->fd, kSubscriberLockBase + static_cast<off_t>(i),
                           "stop the subscriber before forgetting its identity", false);
     entry.metadata.state.store(kMemberFree, std::memory_order_release);
-    entry.metadata.id_size = 0;
-    std::memset(entry.metadata.id, 0, sizeof(entry.metadata.id));
     reconcile_member_count(impl_->header, entries);
     const auto minimum = minimum_acknowledged(impl_->header, entries);
     impl_->header->retention_watermark.value.store(minimum, std::memory_order_release);
@@ -555,6 +554,8 @@ Stats Bus::stats() const {
     throw Error(ErrorCode::invalid_argument, "bus is not open");
   auto *h = impl_->header;
   auto *entries = impl_->subscribers();
+  ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
+                          "unable to take a subscriber statistics snapshot");
   return {h->published.value.load(std::memory_order_acquire),
           minimum_acknowledged(h, entries),
           h->capacity,
