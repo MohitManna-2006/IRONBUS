@@ -204,11 +204,13 @@ void cli_rejects_bad_wait_options(const std::string &exe) {
   auto n = name("bad_wait_options");
   Cleanup cleanup{n};
   auto creator = ironbus::Bus::create(n, 4);
-  for (const auto &[strategy, spins] : std::vector<std::pair<std::string, std::string>>{
-           {"unknown", "100"}, {"futex", "10000001"}, {"adaptive", "invalid"}}) {
-    auto child = spawn(
-        exe, {"sub", "--name", n, "--count", "1", "--strategy", strategy, "--spin-count", spins});
-    check(wait_bounded(child, 2s) == 1, "invalid CLI wait option is rejected promptly");
+  for (const auto &role : {std::string("pub"), std::string("sub")}) {
+    for (const auto &[strategy, spins] : std::vector<std::pair<std::string, std::string>>{
+             {"unknown", "100"}, {"futex", "10000001"}, {"adaptive", "invalid"}}) {
+      auto child = spawn(
+          exe, {role, "--name", n, "--count", "1", "--strategy", strategy, "--spin-count", spins});
+      check(wait_bounded(child, 2s) == 1, "invalid CLI wait option is rejected promptly");
+    }
   }
   check(creator.stats().published == 0, "invalid options do not mutate the shared ring");
 }
