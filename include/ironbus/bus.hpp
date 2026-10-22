@@ -51,6 +51,7 @@ struct Stats {
 };
 
 enum class Role { publisher, subscriber };
+enum class WaitStrategy { busy_poll, futex, adaptive };
 
 class Bus final {
 public:
@@ -66,6 +67,10 @@ public:
   static void unlink(std::string_view name);
 
   void claim(Role role);
+  // Wait policy is process-local and must be selected before claiming a role.
+  // Adaptive mode spins for spin_budget predicate checks before sleeping.
+  void set_wait_strategy(WaitStrategy strategy, std::uint32_t spin_budget = 1000);
+  [[nodiscard]] WaitStrategy wait_strategy() const;
   [[nodiscard]] Stats stats() const;
   [[nodiscard]] std::uint32_t capacity() const;
 
