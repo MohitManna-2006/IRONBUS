@@ -124,6 +124,8 @@ struct Bus::Impl {
   Role role{Role::publisher};
   std::uint64_t pending{};
   bool delivered{};
+  WaitStrategy wait_strategy{WaitStrategy::busy_poll};
+  std::uint32_t spin_budget{1000};
 
   ~Impl() {
     if (mapping != MAP_FAILED)
@@ -230,6 +232,26 @@ void Bus::claim(Role role) {
     impl_->pending =
         acknowledged == std::numeric_limits<std::uint64_t>::max() ? 0 : acknowledged + 1;
   }
+}
+
+void Bus::set_wait_strategy(WaitStrategy strategy, std::uint32_t spin_budget) {
+  if (!impl_)
+    throw Error(ErrorCode::invalid_argument, "bus is not open");
+  if (impl_->role_claimed)
+    throw Error(ErrorCode::invalid_argument, "wait strategy must be set before claiming a role");
+  if (strategy != WaitStrategy::busy_poll && strategy != WaitStrategy::futex &&
+      strategy != WaitStrategy::adaptive)
+    throw Error(ErrorCode::invalid_argument, "unknown wait strategy");
+  if (spin_budget > 10'000'000)
+    throw Error(ErrorCode::invalid_argument, "spin budget exceeds 10000000 checks");
+  impl_->wait_strategy = strategy;
+  impl_->spin_budget = spin_budget;
+}
+
+WaitStrategy Bus::wait_strategy() const {
+  if (!impl_)
+    throw Error(ErrorCode::invalid_argument, "bus is not open");
+  return impl_->wait_strategy;
 }
 
 Stats Bus::stats() const {
