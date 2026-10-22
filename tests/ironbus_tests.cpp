@@ -202,6 +202,47 @@ void wait_strategy_processes(const std::string &exe) {
   }
 }
 
+void wait_strategy_timeouts() {
+  const ironbus::WaitStrategy strategies[] = {ironbus::WaitStrategy::busy_poll,
+                                              ironbus::WaitStrategy::futex,
+                                              ironbus::WaitStrategy::adaptive};
+  for (auto strategy : strategies) {
+    auto n = name("wait_timeout");
+    Cleanup cleanup{n};
+    auto pub = ironbus::Bus::create(n, 2);
+    pub.set_wait_strategy(strategy, 16);
+    pub.claim(ironbus::Role::publisher);
+    std::byte value{};
+    pub.publish({&value, 1}, 100ms);
+    pub.publish({&value, 1}, 100ms);
+    bool full_timeout = false;
+    try {
+      pub.publish({&value, 1}, 25ms);
+    } catch (const ironbus::Error &e) {
+      full_timeout = e.code() == ironbus::ErrorCode::timeout;
+    }
+    check(full_timeout, "full-ring timeout is bounded for each policy");
+
+    auto sub = ironbus::Bus::attach(n);
+    sub.set_wait_strategy(strategy, 16);
+    sub.claim(ironbus::Role::subscriber);
+    auto message = sub.receive(100ms);
+    sub.acknowledge(message.sequence);
+    pub.publish({&value, 1}, 100ms);
+    message = sub.receive(100ms);
+    sub.acknowledge(message.sequence);
+    message = sub.receive(100ms);
+    sub.acknowledge(message.sequence);
+    bool empty_timeout = false;
+    try {
+      sub.receive(25ms);
+    } catch (const ironbus::Error &e) {
+      empty_timeout = e.code() == ironbus::ErrorCode::timeout;
+    }
+    check(empty_timeout, "empty-ring timeout is bounded for each policy");
+  }
+}
+
 void crash_redelivery(const std::string &exe) {
   auto n = name("crash");
   Cleanup cleanup{n};
@@ -262,6 +303,7 @@ int main(int argc, char **argv) {
     process_attach_and_roles(argv[1]);
     publisher_process_restart(argv[1]);
     wait_strategy_processes(argv[1]);
+    wait_strategy_timeouts();
     crash_redelivery(argv[1]);
     reject_incompatible();
     std::cout << "all IRONBUS tests passed\n";
