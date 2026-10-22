@@ -35,3 +35,9 @@ The message slot is fixed at 256 bytes: a 64-bit sequence, 32-bit length, 32-bit
 ## Cache layout
 
 Published and acknowledged counters occupy separate 64-byte aligned cache lines to reduce direct false sharing. The slot array follows the validated header. This is a simple initial layout, not a claim that 64 bytes is universal across CPUs.
+
+## Phase 2 waiting
+
+Each endpoint selects a process-local `busy_poll`, `futex`, or `adaptive` wait policy before claiming its role. Published and acknowledged sequences remain the predicates. Separate 32-bit data and space generation words are only sleep-transition hints, placed on their own cache lines and checked for lock-free operation at attachment. A publisher release-publishes the slot, increments the data generation, and wakes the subscriber; an ACK release-stores the cursor, increments the space generation, and wakes the publisher. Waiters check the predicate, sample the generation, check the predicate again, then wait on the sampled value. This closes the check-to-sleep race because a changed word makes `FUTEX_WAIT` return without sleeping. Spurious wakeups and interrupts return to the predicate check.
+
+Futex syscalls use process-shared operations. Adaptive mode spins for its finite configured check budget, then follows the same futex path. All public waits use a `steady_clock` deadline. Generation wrap does not affect message correctness; the wider sequence cursors remain authoritative. A segment with the previous layout version is rejected rather than interpreted as the new format.
