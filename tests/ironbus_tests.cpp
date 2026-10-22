@@ -285,6 +285,13 @@ void wait_strategy_timeouts() {
       full_timeout = e.code() == ironbus::ErrorCode::timeout;
     }
     check(full_timeout, "full-ring timeout is bounded for each policy");
+    bool acknowledgement_timeout = false;
+    try {
+      pub.wait_for_acknowledgement(1, 25ms);
+    } catch (const ironbus::Error &e) {
+      acknowledgement_timeout = e.code() == ironbus::ErrorCode::timeout;
+    }
+    check(acknowledgement_timeout, "ACK wait timeout is bounded for each policy");
 
     auto sub = ironbus::Bus::attach(n);
     sub.set_wait_strategy(strategy, 16);
