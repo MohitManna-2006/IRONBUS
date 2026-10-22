@@ -300,12 +300,10 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
   if (published == std::numeric_limits<std::uint64_t>::max())
     throw Error(ErrorCode::system, "sequence space exhausted");
   const auto next = published + 1;
-  while (next - h->acknowledged.value.load(std::memory_order_acquire) > h->capacity) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      throw Error(ErrorCode::timeout,
-                  "publisher timed out waiting for subscriber acknowledgement (ring full)");
-    detail::cpu_relax();
-  }
+  wait_for_predicate(
+      impl_->wait_strategy, impl_->spin_budget, h->space_generation.value, deadline,
+      [&] { return next - h->acknowledged.value.load(std::memory_order_acquire) <= h->capacity; },
+      "publisher timed out waiting for subscriber acknowledgement (ring full)");
   auto &slot = impl_->slots()[(next - 1) & (h->capacity - 1)];
   slot.sequence = next;
   slot.size = static_cast<std::uint32_t>(payload.size());
@@ -313,6 +311,8 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
   if (!payload.empty())
     std::memcpy(slot.payload, payload.data(), payload.size());
   h->published.value.store(next, std::memory_order_release);
+  h->data_generation.value.fetch_add(1, std::memory_order_release);
+  detail::futex_wake_one(h->data_generation.value);
   return next;
 }
 
@@ -348,6 +348,8 @@ void Bus::acknowledge(std::uint64_t sequence) {
     throw Error(ErrorCode::invalid_argument,
                 "acknowledgement must match the next delivered sequence");
   impl_->header->acknowledged.value.store(sequence, std::memory_order_release);
+  impl_->header->space_generation.value.fetch_add(1, std::memory_order_release);
+  detail::futex_wake_one(impl_->header->space_generation.value);
   impl_->pending = sequence == std::numeric_limits<std::uint64_t>::max() ? 0 : sequence + 1;
   impl_->delivered = false;
 }
