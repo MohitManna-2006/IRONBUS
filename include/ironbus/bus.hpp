@@ -21,6 +21,8 @@ enum class ErrorCode {
   incompatible_layout,
   unsafe_initialization,
   role_busy,
+  no_subscribers,
+  subscriber_limit,
   full,
   empty,
   timeout,
@@ -46,6 +48,7 @@ struct Message {
 
 struct Stats {
   std::uint64_t published{};
+  // Minimum acknowledged sequence across registered subscribers.
   std::uint64_t acknowledged{};
   std::uint32_t capacity{};
   std::uint32_t slot_size{};
