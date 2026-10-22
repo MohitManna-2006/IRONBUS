@@ -313,6 +313,7 @@ void crash_redelivery(const std::string &exe) {
   if (dying == 0) {
     try {
       auto consumer = ironbus::Bus::attach(n);
+      consumer.set_wait_strategy(ironbus::WaitStrategy::futex);
       consumer.claim(ironbus::Role::subscriber);
       (void)consumer.receive(2s);
       kill(getpid(), SIGKILL); // Crash after copy and before ACK.
@@ -324,6 +325,7 @@ void crash_redelivery(const std::string &exe) {
   check(dying > 0, "fork crash-test subscriber");
   check(wait_bounded(dying, 4s) == 128, "subscriber crashes after receive and before ACK");
   auto recovered = ironbus::Bus::attach(n);
+  recovered.set_wait_strategy(ironbus::WaitStrategy::futex);
   recovered.claim(ironbus::Role::subscriber);
   auto redelivered = recovered.receive(2s);
   check(redelivered.sequence == 1 && redelivered.size == sizeof(payload),
