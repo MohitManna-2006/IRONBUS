@@ -55,5 +55,7 @@ if(IRONBUS_BUILD_BENCHMARK)
       COMMAND ironbus_bench 10 2 8 busy busy 0 2048 none)
     set_tests_properties(ironbus_bench_rejects_invalid_cpu_index
       PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
+    add_test(NAME ironbus_bench_rejects_malformed_number COMMAND ironbus_bench nope)
+    set_tests_properties(ironbus_bench_rejects_malformed_number PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
   endif()
 endif()
