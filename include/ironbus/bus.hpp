@@ -13,6 +13,7 @@ namespace ironbus {
 
 inline constexpr std::size_t kPayloadBytes = 240;
 inline constexpr std::size_t kSlotBytes = 256;
+inline constexpr std::size_t kSubscriberIdBytes = 63;
 
 enum class ErrorCode {
   system,
@@ -48,6 +49,8 @@ struct Stats {
   std::uint64_t acknowledged{};
   std::uint32_t capacity{};
   std::uint32_t slot_size{};
+  std::uint32_t registered_subscribers{};
+  bool membership_sealed{};
 };
 
 enum class Role { publisher, subscriber };
@@ -64,11 +67,17 @@ public:
   Bus(const Bus &) = delete;
   Bus &operator=(const Bus &) = delete;
 
-  static Bus create(std::string_view name, std::uint32_t capacity);
+  static Bus create(std::string_view name, std::uint32_t capacity,
+                    std::uint32_t max_subscribers = 16);
   static Bus attach(std::string_view name);
   static void unlink(std::string_view name);
 
-  void claim(Role role);
+  // Subscriber IDs are stable logical identities. Reclaiming the same ID
+  // resumes its persisted cursor; new IDs join at the current tail.
+  void claim(Role role, std::string_view subscriber_id = "default");
+  // Explicitly forget a quiescent subscriber. This drops its retained backlog
+  // and requires that neither the publisher nor subscriber role is held.
+  void forget_subscriber(std::string_view subscriber_id);
   // Wait policy is process-local and must be selected before claiming a role.
   // Adaptive mode spins for spin_budget predicate checks before sleeping.
   void set_wait_strategy(WaitStrategy strategy, std::uint32_t spin_budget = 1000);
