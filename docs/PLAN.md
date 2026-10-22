@@ -23,9 +23,9 @@
 See [PHASE2_DESIGN.md](PHASE2_DESIGN.md) for the wait protocol and failure analysis. Mark Phase 2 complete only after the acceptance checks pass.
 See [PHASE2_BENCHMARK_NOTES.md](PHASE2_BENCHMARK_NOTES.md) for one explicitly non-representative emulated comparison sample.
 
-## Phase 3: Multi-consumer architecture
+## Phase 3: Multi-consumer architecture — implementation in progress
 
-Specify per-subscriber cursors, admission, backpressure, and abandoned-subscriber reclamation before implementation.
+Implement the broadcast SPMC contract in [PHASE3_DESIGN.md](PHASE3_DESIGN.md): stable per-subscriber cursors, explicit admission, slowest-reader backpressure, safe quiescent late joins, and explicit removal with no automatic stale-member expiry. Phase 3 remains in progress until its cross-process acceptance suite and native Linux sanitizer CI pass.
 
 ## Phase 4: Failure recovery and lifecycle hardening
 
