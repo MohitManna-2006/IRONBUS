@@ -67,6 +67,8 @@ void wait_policy_configuration() {
   auto n = name("wait_policy");
   Cleanup cleanup{n};
   auto bus = ironbus::Bus::create(n, 2);
+  check(bus.wait_strategy() == ironbus::WaitStrategy::busy_poll,
+        "default wait policy preserves Phase 1 busy polling");
   bus.set_wait_strategy(ironbus::WaitStrategy::futex);
   check(bus.wait_strategy() == ironbus::WaitStrategy::futex,
         "wait policy selection persists on handle");
