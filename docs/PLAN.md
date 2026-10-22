@@ -13,12 +13,12 @@
 - Reject unknown, incomplete, or incompatible layouts. Explicitly state Linux ABI and lock-free atomic assumptions.
 - Acceptance: ordering/integrity, wraparound/full/empty/backpressure, independent processes, crash/redelivery, publisher restart, truncated-layout rejection, and both role-contention checks passed in the bounded Linux x86-64 integration suite on 2026-10-22. CLI operations work between separately launched processes.
 
-## Phase 2: Wakeup strategies and polling
+## Phase 2: Wakeup strategies and polling — implementation complete; final CI acceptance pending
 
 - Add process-shared Linux futex wait/wake with separate data and space generations while keeping the 64-bit sequence cursors authoritative.
 - Expose busy polling, futex waiting, and bounded-spin adaptive waiting per endpoint. Preserve finite timeout behavior and reject unsafe layouts.
 - Add optional benchmark CPU affinity and comparisons that record throughput, publish-to-ACK p50/p99/p99.9, CPU time where available, and environment.
-- Acceptance: all Phase 1 tests pass under each wait policy; futex race, timeout, recovery, and role tests pass; release and sanitizer CI pass on native Linux x86-64.
+- Acceptance checks implemented: mixed policy matrix, both startup orders, empty/full/ACK timeouts, role exclusivity, crash redelivery, release benchmark smoke, and bounded benchmark argument validation. Release build and CTest pass in an x86-64 Docker environment on macOS; native Linux release and sanitizer CI are still required before marking the milestone complete.
 
 See [PHASE2_DESIGN.md](PHASE2_DESIGN.md) for the wait protocol and failure analysis. Mark Phase 2 complete only after the acceptance checks pass.
 
