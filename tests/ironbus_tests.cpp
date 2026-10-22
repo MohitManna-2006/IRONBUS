@@ -213,6 +213,27 @@ void cli_rejects_bad_wait_options(const std::string &exe) {
   check(creator.stats().published == 0, "invalid options do not mutate the shared ring");
 }
 
+void publisher_ack_wait_wakeup(const std::string &exe) {
+  const char *strategies[] = {"busy", "futex", "adaptive"};
+  for (const auto *strategy : strategies) {
+    auto n = name((std::string("ack_wake_") + strategy).c_str());
+    Cleanup cleanup{n};
+    auto pub = ironbus::Bus::create(n, 2);
+    pub.set_wait_strategy(strategy == std::string_view("busy") ? ironbus::WaitStrategy::busy_poll
+                          : strategy == std::string_view("futex")
+                              ? ironbus::WaitStrategy::futex
+                              : ironbus::WaitStrategy::adaptive);
+    pub.claim(ironbus::Role::publisher);
+    std::uint64_t payload = 0;
+    const auto sequence =
+        pub.publish({reinterpret_cast<const std::byte *>(&payload), sizeof(payload)}, 1s);
+    auto sub = spawn(exe, {"sub", "--name", n, "--count", "1", "--timeout-ms", "2000", "--strategy",
+                           strategy, "--spin-count", "0"});
+    pub.wait_for_acknowledgement(sequence, 2s);
+    check(wait_bounded(sub, 3s) == 0, "subscriber ACK wakes publisher under selected policy");
+  }
+}
+
 void wait_strategy_processes(const std::string &exe) {
   const char *strategies[] = {"busy", "futex", "adaptive"};
   std::uint32_t case_number = 0;
@@ -335,6 +356,7 @@ int main(int argc, char **argv) {
     process_attach_and_roles(argv[1]);
     publisher_process_restart(argv[1]);
     cli_rejects_bad_wait_options(argv[1]);
+    publisher_ack_wait_wakeup(argv[1]);
     wait_strategy_processes(argv[1]);
     wait_strategy_timeouts();
     crash_redelivery(argv[1]);
