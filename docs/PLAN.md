@@ -21,6 +21,7 @@
 - Acceptance checks implemented: mixed policy matrix, both startup orders, empty/full/ACK timeouts, role exclusivity, crash redelivery, release benchmark smoke, and bounded benchmark argument validation. Release build and CTest pass in an x86-64 Docker environment on macOS; native Linux release and sanitizer CI are still required before marking the milestone complete.
 
 See [PHASE2_DESIGN.md](PHASE2_DESIGN.md) for the wait protocol and failure analysis. Mark Phase 2 complete only after the acceptance checks pass.
+See [PHASE2_BENCHMARK_NOTES.md](PHASE2_BENCHMARK_NOTES.md) for one explicitly non-representative emulated comparison sample.
 
 ## Phase 3: Multi-consumer architecture
 
