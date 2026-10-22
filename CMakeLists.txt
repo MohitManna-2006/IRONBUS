@@ -9,7 +9,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "IRONBUS requires Linux: POSIX shm plus Linux OFD locks are used")
 endif()
 
-add_library(ironbus_lib src/bus.cpp)
+add_library(ironbus_lib src/bus.cpp src/wait_linux.cpp)
 target_include_directories(ironbus_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(ironbus_lib PUBLIC cxx_std_20)
 target_compile_options(ironbus_lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
