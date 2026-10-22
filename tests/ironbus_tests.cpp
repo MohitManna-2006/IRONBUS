@@ -313,6 +313,24 @@ void wait_strategy_timeouts() {
   }
 }
 
+void wait_strategy_publisher_starts_first(const std::string &exe) {
+  const char *strategies[] = {"busy", "futex", "adaptive"};
+  for (const auto *strategy : strategies) {
+    auto n = name((std::string("publisher_first_") + strategy).c_str());
+    Cleanup cleanup{n};
+    auto creator = ironbus::Bus::create(n, 4);
+    auto pub = spawn(exe, {"pub", "--name", n, "--count", "20", "--timeout-ms", "3000",
+                           "--strategy", strategy, "--spin-count", "8"});
+    std::this_thread::sleep_for(40ms);
+    auto sub = spawn(exe, {"sub", "--name", n, "--count", "20", "--timeout-ms", "3000",
+                           "--strategy", strategy, "--spin-count", "8"});
+    check(wait_bounded(pub, 5s) == 0, "publisher resumes after late subscriber ACKs");
+    check(wait_bounded(sub, 5s) == 0, "late subscriber receives already-published messages");
+    check(creator.stats().published == 20 && creator.stats().acknowledged == 20,
+          "publisher-first startup retains every message");
+  }
+}
+
 void crash_redelivery(const std::string &exe) {
   auto n = name("crash");
   Cleanup cleanup{n};
@@ -378,6 +396,7 @@ int main(int argc, char **argv) {
     publisher_ack_wait_wakeup(argv[1]);
     wait_strategy_processes(argv[1]);
     wait_strategy_timeouts();
+    wait_strategy_publisher_starts_first(argv[1]);
     crash_redelivery(argv[1]);
     reject_incompatible();
     std::cout << "all IRONBUS tests passed\n";
