@@ -4,7 +4,7 @@
 
 A Linux x86-64, C++20, cross-process shared-memory messaging system.
 
-> **Status: Phase 0 and Phase 1 complete.** Linux x86-64 release build and acceptance tests pass. Multi-subscriber fanout, futex wakeups, broker discovery, and zero-copy payload views are not implemented.
+> **Status: Phases 0–3 complete.** Phase 3 broadcast SPMC passed native Linux x86-64 Release and ASan/UBSan CI. Broker discovery and zero-copy payload views are not implemented.
 
 ## Why this exists
 
@@ -13,22 +13,21 @@ A market-data process needs to distribute normalized events to a separate tradin
 ## Architecture today
 
 ```text
-   publisher process                    subscriber process
-   -----------------                    ------------------
-   claim OFD producer lock              claim OFD subscriber lock
-          |                                       |
-          v                                       v
-  write Slot[N] payload             acquire-load published cursor
-  release-store published            copy and validate Slot[N]
-          |                          process message / test hook
-          +---- POSIX shared memory ----> release-store ACK cursor
-                  bounded SPSC ring
+       publisher process                 subscriber processes
+       ------------------                 --------------------
+       claim exclusive OFD lock          claim stable-ID member locks
+               |                           |        |        |
+               v                           v        v        v
+       write Slot[N] payload            read N   read N   read N
+       release-store published          ACK[i]   ACK[j]   ACK[k]
+               |                          \       |       /
+               +------ POSIX shared memory ----+--+
+                       bounded broadcast ring
 
-             publisher cannot reuse Slot[N]
-             until subscriber ACKs it
+       reuse Slot[N] only when min(ACK[registered readers]) >= N
 ```
 
-**Design choices:** fixed-size 256-byte slots, up to 240 payload bytes, power-of-two ring capacity, no dynamic allocation in the library's publish/receive operations, independent 64-byte-aligned atomic cursors, exclusive publisher/subscriber roles enforced with Linux OFD locks, and exact ABI validation upon attach.
+**Design choices:** fixed-size 256-byte slots, up to 240 payload bytes, power-of-two ring capacity, no dynamic allocation in the library's publish/receive operations, independent 64-byte-aligned atomic cursors, exclusive publisher and per-subscriber roles enforced with Linux OFD locks, and exact ABI validation upon attach. This is broadcast SPMC: all subscribers receive each message, and the slowest registered subscriber controls reuse. Adding or explicitly removing identities requires a quiescent publisher; stale members are never evicted automatically.
 
 This is **not** an order book, exchange, matching engine, or network feed handler. It complements AegisFeed and MarketTwin instead of duplicating them.
 
@@ -49,17 +48,19 @@ cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DIRONBUS_ENABLE_SANITIZERS=ON
 cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 
-./build/ironbus create --name demo --capacity 1024
+./build/ironbus create --name demo --capacity 1024 --max-subscribers 16
 # Terminal 1
-./build/ironbus sub --name demo --count 100000
+./build/ironbus sub --name demo --id strategy-a --count 100000
 # Terminal 2
 ./build/ironbus pub --name demo --count 100000
+# Another subscriber process can join the same broadcast:
+./build/ironbus sub --name demo --id strategy-b --count 100000
 # Later
 ./build/ironbus stats --name demo
 ./build/ironbus unlink --name demo
 ```
 
-The executable communicates **between actual processes** (not threads in a single executable). Run the subscriber first or run the publisher first. Without a subscriber, the publisher fills the bounded ring and waits up to 30 seconds by default; use `--timeout-ms` to change the deadline. A stalled live process retains its exclusive role lock until it exits or closes its handle. No messages are silently dropped.
+The executable communicates **between actual processes** (not threads in a single executable). Register initial subscriber identities before first publication; first publish seals the initial roster. Without any subscriber, publish returns `no_subscribers` without advancing the sequence. A stalled reader retains its OFD role lock until it exits or closes its handle, and its persistent ACK cursor continues to gate ring reuse after a crash. Restart with the same `--id` to resume; use `ironbus forget --name demo --id strategy-a` only when publisher and target subscriber are stopped, understanding that this discards its backlog. No messages are silently dropped automatically.
 
 ### Benchmark
 
@@ -67,18 +68,18 @@ The executable communicates **between actual processes** (not threads in a singl
 ./build/ironbus_bench 1000000 4096 64
 ```
 
-The harness launches independent publisher and subscriber processes. It reports messages per second and **publisher-observed publish-to-ACK completion latency** (p50, p99, p99.9) using `steady_clock`, plus combined user and system CPU time from `getrusage`. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` when per-process CPU accounting is useful. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
+The harness launches one publisher and a configurable fanout of independent subscriber processes. It reports messages per second and **publisher-observed publish-to-all-ACK completion latency** (p50, p99, p99.9) using `steady_clock`, plus combined user and system CPU time from `getrusage`. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` when per-process CPU accounting is useful. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
 
 The benchmark accepts endpoint wait policies, a bounded spin count, and optional Linux CPU indices (`none` leaves scheduling unchanged):
 
 ```bash
-./build/ironbus_bench 100000 1024 64 futex adaptive 1000 none none
-./scripts/bench-strategies.sh 100000 1024 64 1000
+./build/ironbus_bench 100000 1024 64 futex adaptive 1000 none none 8
+./scripts/bench-strategies.sh 100000 1024 64 1000 8
 ```
 
 The comparison script runs the same workload under `/usr/bin/time -v`; it does not control system load or pin endpoints. For explicit pinning, pass publisher and subscriber CPU indices as the final two benchmark arguments. Each process reports combined user and system CPU time from `getrusage`.
 
-One emulated x86-64 sample is recorded in [docs/PHASE2_BENCHMARK_NOTES.md](docs/PHASE2_BENCHMARK_NOTES.md), with the container and workload limitations stated alongside the results.
+Phase 2 wait-strategy samples are recorded in [docs/PHASE2_BENCHMARK_NOTES.md](docs/PHASE2_BENCHMARK_NOTES.md). Phase 3 fanout samples and interpretation are in [docs/PHASE3_BENCHMARK_NOTES.md](docs/PHASE3_BENCHMARK_NOTES.md); both are container-emulated observations, not bare-metal performance claims.
 
 The CLI accepts `--strategy busy`, `--strategy futex`, or `--strategy adaptive` on either endpoint. Adaptive mode uses `--spin-count` predicate checks before sleeping; busy mode ignores the spin count. The default remains `busy` for compatibility with the initial Phase 1 behavior. Strategies are chosen independently per process before it claims its role.
 
@@ -109,13 +110,13 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 | Ordering | Strict monotonically increasing per-ring sequence |
 | Capacity | Bounded; publisher backpressures when full |
 | Publisher | Single-owner OFD lock, automatically released on crash |
-| Subscriber | Single-owner OFD lock, automatically released on crash |
-| Consumer crash | Unacknowledged messages redelivered after restart |
+| Subscribers | Fixed roster, each identity has a single-owner OFD lock released on crash |
+| Consumer crash | Its unacknowledged messages redelivered after same-ID restart; its cursor still gates reuse |
 | Publisher crash | Previously published data remains in shared memory; restart continues from cursor |
 | Delivery | **At least once until acknowledged**, provided shared-memory object remains available |
 | End-to-end exactly once | **Not provided**; app must use idempotence/durable effects if needed |
 | Data durability | In RAM (POSIX shared-memory object); not power-loss durable |
-| Multi-consumer fanout | Not yet implemented |
+| Fanout | Broadcast to every registered subscriber; slowest ACK gates reuse |
 | Zero-copy receiving | Not yet implemented; safe copy prevents slot reuse races |
 | Cross-host delivery | Not supported |
 | Portability | Linux x86-64 only; not native macOS/Windows |
@@ -129,7 +130,7 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 - **Phase 0: Foundation (complete)** — C++20/CMake layout, strict warnings, Linux CI, sanitizer option, developer container, and engineering docs. Linux x86-64 build and tests passed.
 - **Phase 1: Correct SPSC shared-memory IPC (complete)** — POSIX shared memory, fixed slots, acquire/release cursors, bounded backpressure, role locks, crash/redelivery behavior, CLI, subprocess tests, and an initial benchmark. All documented acceptance tests passed on Linux x86-64.
 - **Phase 2: Wakeup strategies and polling (complete)** — per-endpoint busy, Linux process-shared futex, and bounded adaptive spin-then-futex policies; CI acceptance passed.
-- **Phase 3: Multi-consumer architecture** — specify per-subscriber cursors, admission, backpressure, and abandoned-subscriber reclamation before implementation.
+- **Phase 3: Multi-consumer architecture (complete)** — bounded broadcast SPMC, stable per-subscriber cursors, admission and explicit quiescent removal. Native Linux x86-64 Release and ASan/UBSan CI passed. See [PHASE3_DESIGN.md](docs/PHASE3_DESIGN.md).
 - **Phase 4: Failure recovery and lifecycle hardening** — fault injection, initialization/lifecycle hardening, operational inspection, and explicit recovery policy.
 - **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
 - **Phase 6: Market-data integration** — typed market-data examples and integrations after transport and schema contracts stabilize.

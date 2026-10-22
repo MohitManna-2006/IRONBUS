@@ -35,12 +35,14 @@ std::string_view option(int argc, char **argv, std::string_view key) {
   return value;
 }
 void usage() {
-  std::cerr << "Usage:\n  ironbus create --name NAME --capacity POWER_OF_TWO\n"
-               "  ironbus pub --name NAME --count N [--timeout-ms N] [--strategy "
-               "busy|futex|adaptive] [--spin-count N]\n"
-               "  ironbus sub --name NAME --count N [--timeout-ms N] [--ack-delay-ms N] "
-               "[--strategy busy|futex|adaptive] [--spin-count N]\n"
-               "  ironbus stats --name NAME\n  ironbus unlink --name NAME\n";
+  std::cerr
+      << "Usage:\n  ironbus create --name NAME --capacity POWER_OF_TWO [--max-subscribers N]\n"
+         "  ironbus pub --name NAME --count N [--timeout-ms N] [--strategy "
+         "busy|futex|adaptive] [--spin-count N]\n"
+         "  ironbus sub --name NAME --id STABLE_ID --count N [--timeout-ms N] [--ack-delay-ms N] "
+         "[--strategy busy|futex|adaptive] [--spin-count N]\n"
+         "  ironbus stats --name NAME\n  ironbus forget --name NAME --id STABLE_ID\n"
+         "  ironbus unlink --name NAME\n";
 }
 ironbus::WaitStrategy wait_strategy(int argc, char **argv) {
   const auto value = optional_option(argc, argv, "--strategy");
@@ -74,10 +76,18 @@ int main(int argc, char **argv) {
       const auto requested_capacity = number(option(argc, argv, "--capacity"), "capacity");
       if (requested_capacity > std::numeric_limits<std::uint32_t>::max())
         throw ironbus::Error(ironbus::ErrorCode::invalid_argument, "capacity exceeds uint32 range");
+      std::uint64_t requested_subscribers = 16;
+      if (auto value = optional_option(argc, argv, "--max-subscribers"); !value.empty())
+        requested_subscribers = number(value, "max subscribers");
+      if (requested_subscribers > std::numeric_limits<std::uint32_t>::max())
+        throw ironbus::Error(ironbus::ErrorCode::invalid_argument,
+                             "max subscribers exceeds uint32 range");
       auto bus = ironbus::Bus::create(option(argc, argv, "--name"),
-                                      static_cast<std::uint32_t>(requested_capacity));
+                                      static_cast<std::uint32_t>(requested_capacity),
+                                      static_cast<std::uint32_t>(requested_subscribers));
       std::cout << "created " << ironbus::shm_name(option(argc, argv, "--name"))
-                << " capacity=" << bus.capacity() << '\n';
+                << " capacity=" << bus.capacity() << " max_subscribers=" << requested_subscribers
+                << '\n';
     } else if (cmd == "unlink") {
       ironbus::Bus::unlink(option(argc, argv, "--name"));
       std::cout << "unlinked\n";
@@ -86,7 +96,13 @@ int main(int argc, char **argv) {
       auto s = bus.stats();
       std::cout << "published=" << s.published << " acknowledged=" << s.acknowledged
                 << " outstanding=" << s.published - s.acknowledged << " capacity=" << s.capacity
-                << " slot_size=" << s.slot_size << '\n';
+                << " slot_size=" << s.slot_size
+                << " registered_subscribers=" << s.registered_subscribers
+                << " membership_sealed=" << (s.membership_sealed ? "true" : "false") << '\n';
+    } else if (cmd == "forget") {
+      auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
+      bus.forget_subscriber(option(argc, argv, "--id"));
+      std::cout << "forgotten subscriber\n";
     } else if (cmd == "pub") {
       auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
       bus.set_wait_strategy(wait_strategy(argc, argv), spin_count(argc, argv));
@@ -106,7 +122,8 @@ int main(int argc, char **argv) {
     } else if (cmd == "sub") {
       auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
       bus.set_wait_strategy(wait_strategy(argc, argv), spin_count(argc, argv));
-      bus.claim(ironbus::Role::subscriber);
+      const auto subscriber_id = optional_option(argc, argv, "--id");
+      bus.claim(ironbus::Role::subscriber, subscriber_id.empty() ? "default" : subscriber_id);
       auto count = number(option(argc, argv, "--count"), "count");
       std::uint64_t timeout = 30000, ack_delay = 0;
       if (auto value = optional_option(argc, argv, "--timeout-ms"); !value.empty())

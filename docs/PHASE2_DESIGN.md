@@ -2,7 +2,7 @@
 
 ## Scope
 
-Phase 2 changes only how an endpoint waits for work or ring space. The Phase 1 single-publisher/single-subscriber sequence and acknowledgement contract remains authoritative. No message is dropped, and no wakeup event itself represents a message.
+Phase 2 changed only how an endpoint waits for work or ring space. At that milestone, the Phase 1 single-publisher/single-subscriber sequence and acknowledgement contract remained authoritative. Phase 3 extends the sequence contract to per-subscriber cursors and broadcast wake-all; see [PHASE3_DESIGN.md](PHASE3_DESIGN.md). No message is dropped, and no wakeup event itself represents a message.
 
 Three process-local policies will be available:
 
@@ -28,7 +28,7 @@ For an empty subscriber, the wait loop is:
 4. `FUTEX_WAIT` on the observed generation value with the remaining deadline.
 5. Recheck the sequence predicate after every wake, `EAGAIN`, interrupt, or timeout.
 
-Publisher backpressure uses the symmetric protocol with the acknowledged sequence and space generation. The publisher release-stores the new published sequence before incrementing the data generation and waking one subscriber. The subscriber release-stores the ACK before incrementing the space generation and waking one publisher. A wake between steps 2 and 4 changes the futex word, so the kernel returns `EAGAIN` instead of sleeping through the event.
+Publisher backpressure uses the symmetric protocol with the acknowledged sequence and space generation. Phase 2 woke one subscriber after publication. Phase 3 wakes all subscribers because each is entitled to the same broadcast. The subscriber release-stores its ACK before incrementing the space generation and waking the single publisher. A wake between steps 2 and 4 changes the futex word, so the kernel returns `EAGAIN` instead of sleeping through the event.
 
 Futex calls use process-shared operations, never `FUTEX_PRIVATE_FLAG`. Relative wait duration is recomputed from a `steady_clock` deadline after every retry. `EINTR` and `EAGAIN` retry the predicate; expiration returns the existing timeout error. Unexpected syscall failures are reported with operation context.
 

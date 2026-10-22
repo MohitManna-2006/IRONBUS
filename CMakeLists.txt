@@ -30,7 +30,7 @@ if(BUILD_TESTING)
   target_link_libraries(ironbus_tests PRIVATE ironbus_lib)
   target_compile_options(ironbus_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
   add_test(NAME ironbus_tests COMMAND ironbus_tests $<TARGET_FILE:ironbus>)
-  set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45 LABELS "integration;phase2")
+  set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45 LABELS "integration;phase3")
 endif()
 
 if(IRONBUS_BUILD_BENCHMARK)
@@ -43,6 +43,10 @@ if(IRONBUS_BUILD_BENCHMARK)
         COMMAND ironbus_bench 256 16 64 ${strategy} ${strategy} 16 none none)
       set_tests_properties(ironbus_bench_${strategy} PROPERTIES TIMEOUT 15 LABELS "benchmark;phase2")
     endforeach()
+    add_test(NAME ironbus_bench_broadcast_fanout
+      COMMAND ironbus_bench 256 16 64 adaptive futex 16 none none 4)
+    set_tests_properties(ironbus_bench_broadcast_fanout PROPERTIES TIMEOUT 15
+      LABELS "benchmark;phase3")
     add_test(NAME ironbus_bench_rejects_unknown_strategy
       COMMAND ironbus_bench 10 2 8 unknown busy 0 none none)
     set_tests_properties(ironbus_bench_rejects_unknown_strategy
@@ -58,7 +62,7 @@ if(IRONBUS_BUILD_BENCHMARK)
     add_test(NAME ironbus_bench_rejects_malformed_number COMMAND ironbus_bench nope)
     set_tests_properties(ironbus_bench_rejects_malformed_number PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
     add_test(NAME ironbus_bench_rejects_extra_arguments
-      COMMAND ironbus_bench 10 2 8 busy busy 0 none none extra)
+      COMMAND ironbus_bench 10 2 8 busy busy 0 none none 1 extra)
     set_tests_properties(ironbus_bench_rejects_extra_arguments
       PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
   endif()

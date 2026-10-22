@@ -23,9 +23,9 @@
 See [PHASE2_DESIGN.md](PHASE2_DESIGN.md) for the wait protocol and failure analysis. Mark Phase 2 complete only after the acceptance checks pass.
 See [PHASE2_BENCHMARK_NOTES.md](PHASE2_BENCHMARK_NOTES.md) for one explicitly non-representative emulated comparison sample.
 
-## Phase 3: Multi-consumer architecture
+## Phase 3: Multi-consumer architecture — complete (2026-10-22)
 
-Specify per-subscriber cursors, admission, backpressure, and abandoned-subscriber reclamation before implementation.
+Implement the broadcast SPMC contract in [PHASE3_DESIGN.md](PHASE3_DESIGN.md): stable per-subscriber cursors, explicit admission, slowest-reader backpressure, safe quiescent late joins, and explicit removal with no automatic stale-member expiry. Acceptance passed: cross-process fanout, slow-reader gating, restart/redelivery, late admission, explicit forgetting, bounded role conflicts, benchmark fanout smoke, plus native Linux x86-64 Release and ASan/UBSan CI on 2026-10-22. Local x86-64 Docker-emulated Release tests also passed. Performance samples remain explicitly non-representative of bare metal.
 
 ## Phase 4: Failure recovery and lifecycle hardening
 
