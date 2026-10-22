@@ -71,25 +71,26 @@ double cpu_seconds(const rusage &usage) {
 }
 } // namespace
 int main(int argc, char **argv) {
-  auto count = argc > 1 ? arg(argv, 1, 100000) : 100000;
-  auto capacity = static_cast<std::uint32_t>(argc > 2 ? arg(argv, 2, 1024) : 1024);
-  auto payload_size = static_cast<std::uint32_t>(argc > 3 ? arg(argv, 3, 8) : 8);
-  ironbus::WaitStrategy publisher_strategy{};
-  ironbus::WaitStrategy subscriber_strategy{};
-  auto spin_count = static_cast<std::uint32_t>(argc > 6 ? arg(argv, 6, 1000) : 1000);
-  std::optional<int> publisher_cpu, subscriber_cpu;
-  if (count == 0 || payload_size < 8 || payload_size > ironbus::kPayloadBytes) {
-    std::cerr << "usage: ironbus_bench [count] [capacity] [payload] [pub-strategy] [sub-strategy] "
-                 "[spin-count] [pub-cpu|none] [sub-cpu|none]\n";
-    return 2;
-  }
-  struct utsname environment {};
-  if (uname(&environment) != 0) {
-    std::cerr << "benchmark error: unable to read kernel environment\n";
-    return 1;
-  }
   auto n = "bench_" + std::to_string(getpid());
   try {
+    auto count = argc > 1 ? arg(argv, 1, 100000) : 100000;
+    auto capacity = static_cast<std::uint32_t>(argc > 2 ? arg(argv, 2, 1024) : 1024);
+    auto payload_size = static_cast<std::uint32_t>(argc > 3 ? arg(argv, 3, 8) : 8);
+    ironbus::WaitStrategy publisher_strategy{};
+    ironbus::WaitStrategy subscriber_strategy{};
+    auto spin_count = static_cast<std::uint32_t>(argc > 6 ? arg(argv, 6, 1000) : 1000);
+    std::optional<int> publisher_cpu, subscriber_cpu;
+    if (count == 0 || payload_size < 8 || payload_size > ironbus::kPayloadBytes) {
+      std::cerr
+          << "usage: ironbus_bench [count] [capacity] [payload] [pub-strategy] [sub-strategy] "
+             "[spin-count] [pub-cpu|none] [sub-cpu|none]\n";
+      return 2;
+    }
+    struct utsname environment {};
+    if (uname(&environment) != 0) {
+      std::cerr << "benchmark error: unable to read kernel environment\n";
+      return 1;
+    }
     publisher_strategy = strategy(argc > 4 ? argv[4] : nullptr);
     subscriber_strategy = strategy(argc > 5 ? argv[5] : nullptr);
     publisher_cpu = cpu_arg(argv, 7);
