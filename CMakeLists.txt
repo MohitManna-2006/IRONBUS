@@ -41,7 +41,7 @@ if(IRONBUS_BUILD_BENCHMARK)
     foreach(strategy IN ITEMS busy futex adaptive)
       add_test(NAME ironbus_bench_${strategy}
         COMMAND ironbus_bench 256 16 64 ${strategy} ${strategy} 16 none none)
-      set_tests_properties(ironbus_bench_${strategy} PROPERTIES TIMEOUT 15)
+      set_tests_properties(ironbus_bench_${strategy} PROPERTIES TIMEOUT 15 LABELS "benchmark;phase2")
     endforeach()
     add_test(NAME ironbus_bench_rejects_unknown_strategy
       COMMAND ironbus_bench 10 2 8 unknown busy 0 none none)
