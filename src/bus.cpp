@@ -1,5 +1,7 @@
 #include "ironbus/bus.hpp"
 
+#include "wait_linux.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <cstring>
@@ -9,7 +11,6 @@
 #include <sstream>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <thread>
 #include <unistd.h>
 
 namespace ironbus {
@@ -102,6 +103,29 @@ void lock_role(int fd, Role role) {
                                             : "subscriber role is already held");
     }
     throw Error(ErrorCode::system, os_error("acquire role lock"));
+  }
+}
+
+template <typename Predicate>
+void wait_for_predicate(WaitStrategy strategy, std::uint32_t spin_budget,
+                        std::atomic<std::uint32_t> &generation,
+                        std::chrono::steady_clock::time_point deadline, Predicate &&ready,
+                        std::string_view timeout_message) {
+  auto spins_remaining = spin_budget;
+  while (!ready()) {
+    if (std::chrono::steady_clock::now() >= deadline)
+      throw Error(ErrorCode::timeout, std::string(timeout_message));
+    if (strategy == WaitStrategy::busy_poll ||
+        (strategy == WaitStrategy::adaptive && spins_remaining != 0)) {
+      if (strategy == WaitStrategy::adaptive)
+        --spins_remaining;
+      detail::cpu_relax();
+      continue;
+    }
+    const auto observed = generation.load(std::memory_order_acquire);
+    if (ready())
+      return;
+    detail::futex_wait(generation, observed, deadline);
   }
 }
 } // namespace
@@ -298,11 +322,11 @@ Message Bus::receive(std::chrono::milliseconds timeout) {
   if (impl_->pending == 0)
     throw Error(ErrorCode::system, "sequence space exhausted");
   auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (impl_->header->published.value.load(std::memory_order_acquire) < impl_->pending) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      throw Error(ErrorCode::timeout, "subscriber timed out waiting for a message");
-    std::this_thread::yield();
-  }
+  auto *h = impl_->header;
+  wait_for_predicate(
+      impl_->wait_strategy, impl_->spin_budget, h->data_generation.value, deadline,
+      [&] { return h->published.value.load(std::memory_order_acquire) >= impl_->pending; },
+      "subscriber timed out waiting for a message");
   const auto seq = impl_->pending;
   auto &slot = impl_->slots()[(seq - 1) & (impl_->header->capacity - 1)];
   if (slot.sequence != seq || slot.size > kPayloadBytes)
