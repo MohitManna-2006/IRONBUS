@@ -118,11 +118,10 @@ int main(int argc, char **argv) {
       std::array<std::byte, ironbus::kPayloadBytes> data{};
       auto sent = stamp();
       std::memcpy(data.data(), &sent, sizeof(sent));
-      pub.publish({data.data(), payload_size}, std::chrono::seconds(60));
-      while (pub.stats().acknowledged < i + 1)
-        std::this_thread::yield();
-      // This round-trip timestamp measures the observed ACK completion time.
-      // It bounds end-to-end transport plus scheduling and ACK polling.
+      const auto sequence = pub.publish({data.data(), payload_size}, std::chrono::seconds(60));
+      pub.wait_for_acknowledgement(sequence, std::chrono::seconds(60));
+      // Round trip includes transport, subscriber copy/ACK, scheduling, and
+      // publisher wake/observation under the configured policy.
       latency.push_back(stamp() - sent);
     }
     auto elapsed = std::chrono::duration<double>(Clock::now() - begin).count();
