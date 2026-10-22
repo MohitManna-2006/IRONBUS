@@ -102,6 +102,20 @@ void basic_and_restart() {
     std::byte b{static_cast<unsigned char>(i)};
     check(pub.publish({&b, 1}, 100ms) == i + 1, "sequence order");
   }
+  bool ack_timed_out = false;
+  try {
+    pub.wait_for_acknowledgement(1, 20ms);
+  } catch (const ironbus::Error &e) {
+    ack_timed_out = e.code() == ironbus::ErrorCode::timeout;
+  }
+  check(ack_timed_out, "publisher acknowledgement wait times out while subscriber is stalled");
+  bool future_ack_rejected = false;
+  try {
+    pub.wait_for_acknowledgement(5, 20ms);
+  } catch (const ironbus::Error &e) {
+    future_ack_rejected = e.code() == ironbus::ErrorCode::invalid_argument;
+  }
+  check(future_ack_rejected, "publisher cannot wait for an unpublished sequence");
   bool timed = false;
   try {
     std::byte b{};
@@ -130,6 +144,7 @@ void basic_and_restart() {
           "integrity / wraparound");
     sub.acknowledge(m.sequence);
   }
+  pub.wait_for_acknowledgement(4, 100ms);
   std::byte b{9};
   check(pub.publish({&b, 1}, 100ms) == 5, "publisher restart sequence");
   auto m = sub.receive(100ms);
