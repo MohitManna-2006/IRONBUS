@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +28,14 @@ std::uint64_t stamp() {
           .count());
 }
 std::uint64_t arg(char **argv, int i, std::uint64_t fallback) {
-  return argv[i] ? std::strtoull(argv[i], nullptr, 10) : fallback;
+  if (!argv[i])
+    return fallback;
+  std::uint64_t parsed{};
+  const std::string_view value(argv[i]);
+  const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+  if (error != std::errc{} || end != value.data() + value.size())
+    throw std::runtime_error("benchmark numeric arguments must be unsigned decimal integers");
+  return parsed;
 }
 ironbus::WaitStrategy strategy(const char *value) {
   if (!value || std::string_view(value) == "busy")
