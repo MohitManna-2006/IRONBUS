@@ -67,7 +67,16 @@ The executable communicates **between actual processes** (not threads in a singl
 ./build/ironbus_bench 1000000 4096 64
 ```
 
-The harness launches independent publisher and subscriber processes. It reports messages per second and **publisher-observed publish-to-ACK completion latency** (p50, p99, p99.9) using `steady_clock`; CPU usage is not collected by the harness. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` for process CPU accounting. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
+The harness launches independent publisher and subscriber processes. It reports messages per second and **publisher-observed publish-to-ACK completion latency** (p50, p99, p99.9) using `steady_clock`, plus combined user and system CPU time from `getrusage`. Timing includes scheduler and polling effects. Run under `/usr/bin/time -v` when per-process CPU accounting is useful. These are not single-operation ring overhead or NIC wire-to-wire latencies. Record architecture, kernel, load, affinity, and multiple runs before drawing conclusions. Docker measurements are not representative of bare-metal latency.
+
+The benchmark accepts endpoint wait policies, a bounded spin count, and optional Linux CPU indices (`none` leaves scheduling unchanged):
+
+```bash
+./build/ironbus_bench 100000 1024 64 futex adaptive 1000 none none
+./scripts/bench-strategies.sh 100000 1024 64 1000
+```
+
+The comparison script runs the same workload under `/usr/bin/time -v`; it does not control system load or pin endpoints. For explicit pinning, pass publisher and subscriber CPU indices as the final two benchmark arguments. Each process reports combined user and system CPU time from `getrusage`.
 
 ### Recovery demo
 
@@ -115,7 +124,7 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 
 - **Phase 0: Foundation (complete)** — C++20/CMake layout, strict warnings, Linux CI, sanitizer option, developer container, and engineering docs. Linux x86-64 build and tests passed.
 - **Phase 1: Correct SPSC shared-memory IPC (complete)** — POSIX shared memory, fixed slots, acquire/release cursors, bounded backpressure, role locks, crash/redelivery behavior, CLI, subprocess tests, and an initial benchmark. All documented acceptance tests passed on Linux x86-64.
-- **Phase 2: Wakeup strategies and polling** — compare bounded busy polling with Linux futex wakeups; record CPU and latency effects.
+- **Phase 2: Wakeup strategies and polling (implementation in progress)** — bounded busy polling, Linux process-shared futex waits, and adaptive spin-then-futex are implemented. Acceptance and benchmark characterization remain in progress.
 - **Phase 3: Multi-consumer architecture** — specify per-subscriber cursors, admission, backpressure, and abandoned-subscriber reclamation before implementation.
 - **Phase 4: Failure recovery and lifecycle hardening** — fault injection, initialization/lifecycle hardening, operational inspection, and explicit recovery policy.
 - **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
