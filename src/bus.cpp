@@ -15,7 +15,7 @@
 namespace ironbus {
 namespace {
 constexpr std::uint64_t kMagic = 0x49524f4e42555331ULL; // IRONBUS1
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersion = 2;
 constexpr std::uint32_t kInitializing = 1;
 constexpr std::uint32_t kReady = 2;
 constexpr std::uint32_t kMaxCapacity = 1U << 20;
@@ -26,6 +26,12 @@ struct alignas(kCacheLine) Cursor {
   std::byte padding[kCacheLine - sizeof(std::atomic<std::uint64_t>)]{};
 };
 static_assert(sizeof(Cursor) == kCacheLine);
+
+struct alignas(kCacheLine) Generation {
+  std::atomic<std::uint32_t> value{0};
+  std::byte padding[kCacheLine - sizeof(std::atomic<std::uint32_t>)]{};
+};
+static_assert(sizeof(Generation) == kCacheLine);
 
 struct alignas(16) Header {
   std::uint64_t magic{};
@@ -38,6 +44,8 @@ struct alignas(16) Header {
   std::uint32_t reserved{};
   Cursor published;
   Cursor acknowledged;
+  Generation data_generation;
+  Generation space_generation;
 };
 
 struct Slot {
@@ -162,6 +170,8 @@ Bus Bus::create(std::string_view name, std::uint32_t capacity) {
   h->total_size = bytes;
   h->published.value.store(0, std::memory_order_relaxed);
   h->acknowledged.value.store(0, std::memory_order_relaxed);
+  h->data_generation.value.store(0, std::memory_order_relaxed);
+  h->space_generation.value.store(0, std::memory_order_relaxed);
   h->state.store(kReady, std::memory_order_release);
   impl->cleanup_created = false;
   return Bus(std::move(impl));
@@ -186,7 +196,8 @@ Bus Bus::attach(std::string_view name) {
   impl->header = static_cast<Header *>(impl->mapping);
   auto *h = impl->header;
   if (!h->state.is_lock_free() || !h->published.value.is_lock_free() ||
-      !h->acknowledged.value.is_lock_free())
+      !h->acknowledged.value.is_lock_free() || !h->data_generation.value.is_lock_free() ||
+      !h->space_generation.value.is_lock_free())
     throw Error(ErrorCode::incompatible_layout, "required shared atomics are not lock-free");
   if (h->state.load(std::memory_order_acquire) != kReady)
     throw Error(ErrorCode::unsafe_initialization,
