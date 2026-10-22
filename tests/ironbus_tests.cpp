@@ -164,23 +164,28 @@ void process_attach_and_roles(const std::string &exe) {
   auto n = name("process");
   Cleanup cleanup{n};
   auto create = ironbus::Bus::create(n, 8);
-  auto sub = spawn(exe, {"sub", "--name", n, "--count", "32", "--timeout-ms", "5000"});
+  auto sub = spawn(
+      exe, {"sub", "--name", n, "--count", "32", "--timeout-ms", "5000", "--strategy", "futex"});
   std::this_thread::sleep_for(100ms);
-  auto competing = spawn(exe, {"sub", "--name", n, "--count", "1", "--timeout-ms", "500"});
+  auto competing = spawn(
+      exe, {"sub", "--name", n, "--count", "1", "--timeout-ms", "500", "--strategy", "futex"});
   check(wait_bounded(competing, 2s) == 1, "concurrent subscriber role must be rejected");
-  auto pub = spawn(exe, {"pub", "--name", n, "--count", "32", "--timeout-ms", "5000"});
+  auto pub = spawn(
+      exe, {"pub", "--name", n, "--count", "32", "--timeout-ms", "5000", "--strategy", "futex"});
   check(wait_bounded(pub, 7s) == 0, "independent publisher process");
   check(wait_bounded(sub, 7s) == 0, "independent subscriber process");
 
   // With no subscriber holding the role, this process fills the bounded ring
   // and remains alive under backpressure, giving the competing publisher a
   // deterministic window to attempt the same role.
-  auto stalled_pub = spawn(exe, {"pub", "--name", n, "--count", "9", "--timeout-ms", "5000"});
+  auto stalled_pub = spawn(
+      exe, {"pub", "--name", n, "--count", "9", "--timeout-ms", "5000", "--strategy", "futex"});
   const auto deadline = std::chrono::steady_clock::now() + 2s;
   while (create.stats().published < 40 && std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(5ms);
   check(create.stats().published == 40, "publisher reaches full ring while retaining its role");
-  auto competing_pub = spawn(exe, {"pub", "--name", n, "--count", "1", "--timeout-ms", "500"});
+  auto competing_pub = spawn(
+      exe, {"pub", "--name", n, "--count", "1", "--timeout-ms", "500", "--strategy", "futex"});
   check(wait_bounded(competing_pub, 2s) == 1, "concurrent publisher role must be rejected");
   kill(stalled_pub, SIGKILL);
   check(wait_bounded(stalled_pub, 2s) == 128, "stalled publisher exits after crash simulation");
