@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sched.h>
 #include <string>
@@ -73,12 +74,20 @@ double cpu_seconds(const rusage &usage) {
 int main(int argc, char **argv) {
   auto n = "bench_" + std::to_string(getpid());
   try {
+    if (argc > 9)
+      throw std::runtime_error("too many benchmark arguments");
     auto count = argc > 1 ? arg(argv, 1, 100000) : 100000;
-    auto capacity = static_cast<std::uint32_t>(argc > 2 ? arg(argv, 2, 1024) : 1024);
-    auto payload_size = static_cast<std::uint32_t>(argc > 3 ? arg(argv, 3, 8) : 8);
+    auto raw_capacity = argc > 2 ? arg(argv, 2, 1024) : 1024;
+    auto raw_payload_size = argc > 3 ? arg(argv, 3, 8) : 8;
     ironbus::WaitStrategy publisher_strategy{};
     ironbus::WaitStrategy subscriber_strategy{};
-    auto spin_count = static_cast<std::uint32_t>(argc > 6 ? arg(argv, 6, 1000) : 1000);
+    auto raw_spin_count = argc > 6 ? arg(argv, 6, 1000) : 1000;
+    if (raw_capacity > std::numeric_limits<std::uint32_t>::max() ||
+        raw_payload_size > std::numeric_limits<std::uint32_t>::max() || raw_spin_count > 10'000'000)
+      throw std::runtime_error("capacity, payload, or spin count is out of supported range");
+    auto capacity = static_cast<std::uint32_t>(raw_capacity);
+    auto payload_size = static_cast<std::uint32_t>(raw_payload_size);
+    auto spin_count = static_cast<std::uint32_t>(raw_spin_count);
     std::optional<int> publisher_cpu, subscriber_cpu;
     if (count == 0 || payload_size < 8 || payload_size > ironbus::kPayloadBytes) {
       std::cerr
