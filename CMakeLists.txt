@@ -47,5 +47,9 @@ if(IRONBUS_BUILD_BENCHMARK)
       COMMAND ironbus_bench 10 2 8 unknown busy 0 none none)
     set_tests_properties(ironbus_bench_rejects_unknown_strategy
       PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
+    add_test(NAME ironbus_bench_rejects_excessive_spin_count
+      COMMAND ironbus_bench 10 2 8 busy busy 10000001 none none)
+    set_tests_properties(ironbus_bench_rejects_excessive_spin_count
+      PROPERTIES WILL_FAIL TRUE TIMEOUT 2)
   endif()
 endif()
