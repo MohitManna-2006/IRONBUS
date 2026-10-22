@@ -51,13 +51,15 @@ void pin_to_cpu(std::optional<int> cpu) {
     return;
   cpu_set_t set;
   CPU_ZERO(&set);
-  CPU_SET(*cpu, &set);
+  CPU_SET(static_cast<std::size_t>(*cpu), &set);
   if (sched_setaffinity(0, sizeof(set), &set) != 0)
     throw std::runtime_error("sched_setaffinity failed for requested CPU");
 }
 double cpu_seconds(const rusage &usage) {
-  return static_cast<double>(usage.ru_utime.tv_sec) + usage.ru_utime.tv_usec / 1e6 +
-         static_cast<double>(usage.ru_stime.tv_sec) + usage.ru_stime.tv_usec / 1e6;
+  return static_cast<double>(usage.ru_utime.tv_sec) +
+         static_cast<double>(usage.ru_utime.tv_usec) / 1e6 +
+         static_cast<double>(usage.ru_stime.tv_sec) +
+         static_cast<double>(usage.ru_stime.tv_usec) / 1e6;
 }
 } // namespace
 int main(int argc, char **argv) {
