@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -199,6 +200,19 @@ void publisher_process_restart(const std::string &exe) {
         "publisher restart preserves cursors");
 }
 
+void cli_rejects_bad_wait_options(const std::string &exe) {
+  auto n = name("bad_wait_options");
+  Cleanup cleanup{n};
+  auto creator = ironbus::Bus::create(n, 4);
+  for (const auto &[strategy, spins] : std::vector<std::pair<std::string, std::string>>{
+           {"unknown", "100"}, {"futex", "10000001"}, {"adaptive", "invalid"}}) {
+    auto child = spawn(
+        exe, {"sub", "--name", n, "--count", "1", "--strategy", strategy, "--spin-count", spins});
+    check(wait_bounded(child, 2s) == 1, "invalid CLI wait option is rejected promptly");
+  }
+  check(creator.stats().published == 0, "invalid options do not mutate the shared ring");
+}
+
 void wait_strategy_processes(const std::string &exe) {
   const char *strategies[] = {"busy", "futex", "adaptive"};
   std::uint32_t case_number = 0;
@@ -320,6 +334,7 @@ int main(int argc, char **argv) {
     basic_and_restart();
     process_attach_and_roles(argv[1]);
     publisher_process_restart(argv[1]);
+    cli_rejects_bad_wait_options(argv[1]);
     wait_strategy_processes(argv[1]);
     wait_strategy_timeouts();
     crash_redelivery(argv[1]);
