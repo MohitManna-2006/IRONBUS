@@ -78,6 +78,8 @@ The benchmark accepts endpoint wait policies, a bounded spin count, and optional
 
 The comparison script runs the same workload under `/usr/bin/time -v`; it does not control system load or pin endpoints. For explicit pinning, pass publisher and subscriber CPU indices as the final two benchmark arguments. Each process reports combined user and system CPU time from `getrusage`.
 
+One emulated x86-64 sample is recorded in [docs/PHASE2_BENCHMARK_NOTES.md](docs/PHASE2_BENCHMARK_NOTES.md), with the container and workload limitations stated alongside the results.
+
 The CLI accepts `--strategy busy`, `--strategy futex`, or `--strategy adaptive` on either endpoint. Adaptive mode uses `--spin-count` predicate checks before sleeping; busy mode ignores the spin count. The default remains `busy` for compatibility with the initial Phase 1 behavior. Strategies are chosen independently per process before it claims its role.
 
 ### Recovery demo
