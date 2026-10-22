@@ -1,0 +1,221 @@
+#include "ironbus/bus.hpp"
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <fcntl.h>
+#include <iostream>
+#include <signal.h>
+#include <stdexcept>
+#include <string>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
+namespace {
+using namespace std::chrono_literals;
+void check(bool ok, const char *text) {
+  if (!ok)
+    throw std::runtime_error(text);
+}
+std::string name(const char *suffix) {
+  return "test_" + std::to_string(getpid()) + "_" + suffix;
+}
+pid_t spawn(const std::string &exe, std::initializer_list<std::string> args) {
+  auto pid = fork();
+  if (pid == 0) {
+    std::vector<char *> argv;
+    argv.push_back(const_cast<char *>(exe.c_str()));
+    for (const auto &arg : args)
+      argv.push_back(const_cast<char *>(arg.c_str()));
+    argv.push_back(nullptr);
+    execv(exe.c_str(), argv.data());
+    _exit(127);
+  }
+  if (pid < 0)
+    throw std::runtime_error("fork failed");
+  return pid;
+}
+int wait_bounded(pid_t pid, std::chrono::seconds timeout) {
+  auto until = std::chrono::steady_clock::now() + timeout;
+  int status{};
+  while (std::chrono::steady_clock::now() < until) {
+    auto r = waitpid(pid, &status, WNOHANG);
+    if (r == pid)
+      return WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+    std::this_thread::sleep_for(10ms);
+  }
+  kill(pid, SIGKILL);
+  waitpid(pid, &status, 0);
+  return 124;
+}
+struct Cleanup {
+  std::string n;
+  ~Cleanup() {
+    try {
+      ironbus::Bus::unlink(n);
+    } catch (...) {
+    }
+  }
+};
+
+void basic_and_restart() {
+  auto n = name("basic");
+  Cleanup cleanup{n};
+  auto pub = ironbus::Bus::create(n, 4);
+  pub.claim(ironbus::Role::publisher);
+  for (std::uint64_t i = 0; i < 4; ++i) {
+    std::byte b{static_cast<unsigned char>(i)};
+    check(pub.publish({&b, 1}, 100ms) == i + 1, "sequence order");
+  }
+  bool timed = false;
+  try {
+    std::byte b{};
+    pub.publish({&b, 1}, 30ms);
+  } catch (const ironbus::Error &e) {
+    timed = e.code() == ironbus::ErrorCode::timeout;
+  }
+  check(timed, "full ring backpressure timeout");
+  // Publisher restart resumes at the persisted published cursor.
+  pub = ironbus::Bus{};
+  pub = ironbus::Bus::attach(n);
+  pub.claim(ironbus::Role::publisher);
+  auto sub = ironbus::Bus::attach(n);
+  sub.claim(ironbus::Role::subscriber);
+  bool early_ack = false;
+  try {
+    sub.acknowledge(1);
+  } catch (const ironbus::Error &e) {
+    early_ack = e.code() == ironbus::ErrorCode::invalid_argument;
+  }
+  check(early_ack, "cannot acknowledge before receive");
+  for (std::uint64_t i = 0; i < 4; ++i) {
+    auto m = sub.receive(100ms);
+    check(m.sequence == i + 1 && m.size == 1 &&
+              m.payload[0] == std::byte{static_cast<unsigned char>(i)},
+          "integrity / wraparound");
+    sub.acknowledge(m.sequence);
+  }
+  std::byte b{9};
+  check(pub.publish({&b, 1}, 100ms) == 5, "publisher restart sequence");
+  auto m = sub.receive(100ms);
+  check(m.sequence == 5, "receive after wraparound");
+  sub.acknowledge(5);
+  bool empty = false;
+  try {
+    sub.receive(20ms);
+  } catch (const ironbus::Error &e) {
+    empty = e.code() == ironbus::ErrorCode::timeout;
+  }
+  check(empty, "empty ring timeout");
+}
+
+void process_attach_and_roles(const std::string &exe) {
+  auto n = name("process");
+  Cleanup cleanup{n};
+  auto create = ironbus::Bus::create(n, 8);
+  auto sub = spawn(exe, {"sub", "--name", n, "--count", "32", "--timeout-ms", "5000"});
+  std::this_thread::sleep_for(100ms);
+  auto competing = spawn(exe, {"sub", "--name", n, "--count", "1", "--timeout-ms", "500"});
+  check(wait_bounded(competing, 2s) == 1, "concurrent subscriber role must be rejected");
+  auto pub = spawn(exe, {"pub", "--name", n, "--count", "32", "--timeout-ms", "5000"});
+  check(wait_bounded(pub, 7s) == 0, "independent publisher process");
+  check(wait_bounded(sub, 7s) == 0, "independent subscriber process");
+
+  // With no subscriber holding the role, this process fills the bounded ring
+  // and remains alive under backpressure, giving the competing publisher a
+  // deterministic window to attempt the same role.
+  auto stalled_pub = spawn(exe, {"pub", "--name", n, "--count", "9", "--timeout-ms", "5000"});
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (create.stats().published < 40 && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(5ms);
+  check(create.stats().published == 40, "publisher reaches full ring while retaining its role");
+  auto competing_pub = spawn(exe, {"pub", "--name", n, "--count", "1", "--timeout-ms", "500"});
+  check(wait_bounded(competing_pub, 2s) == 1, "concurrent publisher role must be rejected");
+  kill(stalled_pub, SIGKILL);
+  check(wait_bounded(stalled_pub, 2s) == 128, "stalled publisher exits after crash simulation");
+}
+
+void publisher_process_restart(const std::string &exe) {
+  auto n = name("pub_restart");
+  Cleanup cleanup{n};
+  auto creator = ironbus::Bus::create(n, 8);
+  auto first = spawn(exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000"});
+  check(wait_bounded(first, 4s) == 0, "first publisher process exits cleanly");
+  auto second = spawn(exe, {"pub", "--name", n, "--count", "4", "--timeout-ms", "2000"});
+  check(wait_bounded(second, 4s) == 0, "publisher process restarts and resumes");
+  auto sub = spawn(exe, {"sub", "--name", n, "--count", "8", "--timeout-ms", "2000"});
+  check(wait_bounded(sub, 4s) == 0, "subscriber validates sequences across publisher restart");
+  check(creator.stats().published == 8 && creator.stats().acknowledged == 8,
+        "publisher restart preserves cursors");
+}
+
+void crash_redelivery(const std::string &exe) {
+  auto n = name("crash");
+  Cleanup cleanup{n};
+  auto p = ironbus::Bus::create(n, 4);
+  p.claim(ironbus::Role::publisher);
+  std::uint64_t payload = 0;
+  p.publish({reinterpret_cast<const std::byte *>(&payload), sizeof(payload)}, 100ms);
+  (void)exe;
+  auto dying = fork();
+  if (dying == 0) {
+    try {
+      auto consumer = ironbus::Bus::attach(n);
+      consumer.claim(ironbus::Role::subscriber);
+      (void)consumer.receive(2s);
+      kill(getpid(), SIGKILL); // Crash after copy and before ACK.
+      _exit(2);
+    } catch (...) {
+      _exit(2);
+    }
+  }
+  check(dying > 0, "fork crash-test subscriber");
+  check(wait_bounded(dying, 4s) == 128, "subscriber crashes after receive and before ACK");
+  auto recovered = ironbus::Bus::attach(n);
+  recovered.claim(ironbus::Role::subscriber);
+  auto redelivered = recovered.receive(2s);
+  check(redelivered.sequence == 1 && redelivered.size == sizeof(payload),
+        "unacknowledged message redelivered after subscriber restart");
+  recovered.acknowledge(redelivered.sequence);
+  check(p.stats().acknowledged == 1, "restarted subscriber ACK persisted");
+}
+
+void reject_incompatible() {
+  auto n = name("bad");
+  Cleanup cleanup{n};
+  auto b = ironbus::Bus::create(n, 2);
+  // Mutate through mapped ABI is intentionally omitted from public API. A
+  // truncated object exercises safe initialization/layout rejection.
+  auto raw = shm_open(ironbus::shm_name(n).c_str(), O_RDWR, 0);
+  check(raw >= 0, "open raw shm");
+  check(ftruncate(raw, 16) == 0, "truncate raw shm");
+  close(raw);
+  bool rejected = false;
+  try {
+    auto attached = ironbus::Bus::attach(n);
+    (void)attached;
+  } catch (const ironbus::Error &e) {
+    rejected = e.code() == ironbus::ErrorCode::unsafe_initialization;
+  }
+  check(rejected, "incompatible/truncated segment rejected");
+}
+} // namespace
+int main(int argc, char **argv) {
+  try {
+    if (argc != 2)
+      throw std::runtime_error("expected CLI executable path");
+    basic_and_restart();
+    process_attach_and_roles(argv[1]);
+    publisher_process_restart(argv[1]);
+    crash_redelivery(argv[1]);
+    reject_incompatible();
+    std::cout << "all IRONBUS tests passed\n";
+  } catch (const std::exception &e) {
+    std::cerr << "test failure: " << e.what() << '\n';
+    return 1;
+  }
+}

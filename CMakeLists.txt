@@ -1,0 +1,40 @@
+cmake_minimum_required(VERSION 3.20)
+project(ironbus VERSION 0.1.0 LANGUAGES CXX)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(IRONBUS_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(IRONBUS_BUILD_BENCHMARK "Build the benchmark harness" ON)
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "IRONBUS requires Linux: POSIX shm plus Linux OFD locks are used")
+endif()
+
+add_library(ironbus_lib src/bus.cpp)
+target_include_directories(ironbus_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(ironbus_lib PUBLIC cxx_std_20)
+target_compile_options(ironbus_lib PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
+target_link_libraries(ironbus_lib PUBLIC rt)
+
+if(IRONBUS_ENABLE_SANITIZERS)
+  target_compile_options(ironbus_lib PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(ironbus_lib PUBLIC -fsanitize=address,undefined)
+endif()
+
+add_executable(ironbus apps/ironbus.cpp)
+target_link_libraries(ironbus PRIVATE ironbus_lib)
+target_compile_options(ironbus PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(ironbus_tests tests/ironbus_tests.cpp)
+  target_link_libraries(ironbus_tests PRIVATE ironbus_lib)
+  target_compile_options(ironbus_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
+  add_test(NAME ironbus_tests COMMAND ironbus_tests $<TARGET_FILE:ironbus>)
+  set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45)
+endif()
+
+if(IRONBUS_BUILD_BENCHMARK)
+  add_executable(ironbus_bench bench/bench.cpp)
+  target_link_libraries(ironbus_bench PRIVATE ironbus_lib)
+  target_compile_options(ironbus_bench PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
+endif()
