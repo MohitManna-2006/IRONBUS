@@ -36,9 +36,31 @@ std::string_view option(int argc, char **argv, std::string_view key) {
 }
 void usage() {
   std::cerr << "Usage:\n  ironbus create --name NAME --capacity POWER_OF_TWO\n"
-               "  ironbus pub --name NAME --count N [--timeout-ms N]\n"
-               "  ironbus sub --name NAME --count N [--timeout-ms N] [--ack-delay-ms N]\n"
+               "  ironbus pub --name NAME --count N [--timeout-ms N] [--strategy "
+               "busy|futex|adaptive] [--spin-count N]\n"
+               "  ironbus sub --name NAME --count N [--timeout-ms N] [--ack-delay-ms N] "
+               "[--strategy busy|futex|adaptive] [--spin-count N]\n"
                "  ironbus stats --name NAME\n  ironbus unlink --name NAME\n";
+}
+ironbus::WaitStrategy wait_strategy(int argc, char **argv) {
+  const auto value = optional_option(argc, argv, "--strategy");
+  if (value.empty() || value == "busy")
+    return ironbus::WaitStrategy::busy_poll;
+  if (value == "futex")
+    return ironbus::WaitStrategy::futex;
+  if (value == "adaptive")
+    return ironbus::WaitStrategy::adaptive;
+  throw ironbus::Error(ironbus::ErrorCode::invalid_argument,
+                       "strategy must be busy, futex, or adaptive");
+}
+std::uint32_t spin_count(int argc, char **argv) {
+  const auto value = optional_option(argc, argv, "--spin-count");
+  if (value.empty())
+    return 1000;
+  const auto parsed = number(value, "spin count");
+  if (parsed > std::numeric_limits<std::uint32_t>::max())
+    throw ironbus::Error(ironbus::ErrorCode::invalid_argument, "spin count exceeds uint32 range");
+  return static_cast<std::uint32_t>(parsed);
 }
 } // namespace
 int main(int argc, char **argv) {
@@ -67,6 +89,7 @@ int main(int argc, char **argv) {
                 << " slot_size=" << s.slot_size << '\n';
     } else if (cmd == "pub") {
       auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
+      bus.set_wait_strategy(wait_strategy(argc, argv), spin_count(argc, argv));
       bus.claim(ironbus::Role::publisher);
       auto count = number(option(argc, argv, "--count"), "count");
       std::uint64_t timeout = 30000;
@@ -82,6 +105,7 @@ int main(int argc, char **argv) {
       std::cout << "published=" << count << '\n';
     } else if (cmd == "sub") {
       auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
+      bus.set_wait_strategy(wait_strategy(argc, argv), spin_count(argc, argv));
       bus.claim(ironbus::Role::subscriber);
       auto count = number(option(argc, argv, "--count"), "count");
       std::uint64_t timeout = 30000, ack_delay = 0;
