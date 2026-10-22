@@ -184,6 +184,24 @@ void publisher_process_restart(const std::string &exe) {
         "publisher restart preserves cursors");
 }
 
+void wait_strategy_processes(const std::string &exe) {
+  const char *strategies[] = {"busy", "futex", "adaptive"};
+  for (const auto *strategy : strategies) {
+    auto n = name(strategy);
+    Cleanup cleanup{n};
+    auto creator = ironbus::Bus::create(n, 8);
+    auto sub = spawn(exe, {"sub", "--name", n, "--count", "64", "--timeout-ms", "3000",
+                           "--strategy", strategy, "--spin-count", "32"});
+    std::this_thread::sleep_for(40ms);
+    auto pub = spawn(exe, {"pub", "--name", n, "--count", "64", "--timeout-ms", "3000",
+                           "--strategy", strategy, "--spin-count", "32"});
+    check(wait_bounded(pub, 5s) == 0, "publisher completes with selected wait strategy");
+    check(wait_bounded(sub, 5s) == 0, "subscriber completes with selected wait strategy");
+    check(creator.stats().published == 64 && creator.stats().acknowledged == 64,
+          "wait strategy preserves all messages through repeated ring wraparound");
+  }
+}
+
 void crash_redelivery(const std::string &exe) {
   auto n = name("crash");
   Cleanup cleanup{n};
@@ -243,6 +261,7 @@ int main(int argc, char **argv) {
     basic_and_restart();
     process_attach_and_roles(argv[1]);
     publisher_process_restart(argv[1]);
+    wait_strategy_processes(argv[1]);
     crash_redelivery(argv[1]);
     reject_incompatible();
     std::cout << "all IRONBUS tests passed\n";
