@@ -30,7 +30,7 @@ if(BUILD_TESTING)
   target_link_libraries(ironbus_tests PRIVATE ironbus_lib)
   target_compile_options(ironbus_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
   add_test(NAME ironbus_tests COMMAND ironbus_tests $<TARGET_FILE:ironbus>)
-  set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45 LABELS "integration;phase2")
+  set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45 LABELS "integration;phase3")
 endif()
 
 if(IRONBUS_BUILD_BENCHMARK)
