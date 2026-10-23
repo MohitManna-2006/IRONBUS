@@ -42,6 +42,7 @@ void usage() {
          "  ironbus sub --name NAME --id STABLE_ID --count N [--timeout-ms N] [--ack-delay-ms N] "
          "[--strategy busy|futex|adaptive] [--spin-count N]\n"
          "  ironbus stats --name NAME\n  ironbus forget --name NAME --id STABLE_ID\n"
+         "  ironbus inspect --name NAME\n"
          "  ironbus unlink --name NAME\n";
 }
 ironbus::WaitStrategy wait_strategy(int argc, char **argv) {
@@ -99,6 +100,18 @@ int main(int argc, char **argv) {
                 << " slot_size=" << s.slot_size
                 << " registered_subscribers=" << s.registered_subscribers
                 << " membership_sealed=" << (s.membership_sealed ? "true" : "false") << '\n';
+    } else if (cmd == "inspect") {
+      auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
+      const auto s = bus.stats();
+      std::cout << "object=" << ironbus::shm_name(option(argc, argv, "--name"))
+                << " version=3 capacity=" << s.capacity << " slot_size=" << s.slot_size
+                << " published=" << s.published << " minimum_acknowledged=" << s.acknowledged
+                << " membership_sealed=" << (s.membership_sealed ? "true" : "false")
+                << " publisher_active=" << (s.publisher_active ? "true" : "false") << '\n';
+      for (const auto &subscriber : s.subscribers)
+        std::cout << "subscriber id=" << subscriber.id
+                  << " acknowledged=" << subscriber.acknowledged
+                  << " active=" << (subscriber.active ? "true" : "false") << '\n';
     } else if (cmd == "forget") {
       auto bus = ironbus::Bus::attach(option(argc, argv, "--name"));
       bus.forget_subscriber(option(argc, argv, "--id"));
