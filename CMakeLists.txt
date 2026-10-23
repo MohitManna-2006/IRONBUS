@@ -31,6 +31,17 @@ if(BUILD_TESTING)
   target_compile_options(ironbus_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror)
   add_test(NAME ironbus_tests COMMAND ironbus_tests $<TARGET_FILE:ironbus>)
   set_tests_properties(ironbus_tests PROPERTIES TIMEOUT 45 LABELS "integration;phase3")
+    # Fault injection uses process termination and SIGSTOP, so run these
+    # bounded acceptance scenarios in the Release CI job, not under sanitizers.
+    if(NOT IRONBUS_ENABLE_SANITIZERS)
+      add_test(NAME ironbus_phase4_fault_acceptance
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/phase4-fault-acceptance.sh $<TARGET_FILE:ironbus>)
+      add_test(NAME ironbus_phase4_lifecycle_acceptance
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/phase4-lifecycle-acceptance.sh $<TARGET_FILE:ironbus>)
+      set_tests_properties(ironbus_phase4_fault_acceptance ironbus_phase4_lifecycle_acceptance
+        PROPERTIES TIMEOUT 90 LABELS "integration;phase4"
+        ENVIRONMENT "IRONBUS_COMPILER=${CMAKE_CXX_COMPILER}")
+    endif()
 endif()
 
 if(IRONBUS_BUILD_BENCHMARK)

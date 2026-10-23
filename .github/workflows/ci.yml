@@ -13,6 +13,8 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Phase 4 bounded acceptance
+        run: ctest --test-dir build --label-regex phase4 --output-on-failure
       - name: Configure sanitizer build
         run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DIRONBUS_ENABLE_SANITIZERS=ON
       - name: Build and test sanitizers
