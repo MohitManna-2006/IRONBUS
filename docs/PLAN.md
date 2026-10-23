@@ -33,7 +33,7 @@ The recovery contract and fault model are documented in [PHASE4_DESIGN.md](PHASE
 
 ## Phase 5: Performance engineering
 
-Measure cache-line contention, affinity, NUMA, and tail latency with reproducible bare-metal methodology. Avoid performance claims that exceed the evidence.
+The repeatable fanout/affinity/NUMA sweep runner and methodology are documented in [PHASE5_PERFORMANCE.md](PHASE5_PERFORMANCE.md). Native Linux baselines and measured, evidence-backed optimization remain the acceptance gate; container-emulated runs are not performance evidence.
 
 ## Phase 6: Market-data integration
 

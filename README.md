@@ -82,6 +82,8 @@ The benchmark accepts endpoint wait policies, a bounded spin count, and optional
 
 The comparison script runs the same workload under `/usr/bin/time -v`; it does not control system load or pin endpoints. For explicit pinning, pass publisher and subscriber CPU indices as the final two benchmark arguments. Each process reports combined user and system CPU time from `getrusage`.
 
+For repeated fanout measurements, use `scripts/perf-sweep.sh`. It saves raw runs and records CPU, kernel, affinity, cgroup, governor, and NUMA context. See [docs/PHASE5_PERFORMANCE.md](docs/PHASE5_PERFORMANCE.md) for methodology and limits; Docker-emulated x86-64 runs check the harness but are not representative performance evidence.
+
 Phase 2 wait-strategy samples are recorded in [docs/PHASE2_BENCHMARK_NOTES.md](docs/PHASE2_BENCHMARK_NOTES.md). Phase 3 fanout samples and interpretation are in [docs/PHASE3_BENCHMARK_NOTES.md](docs/PHASE3_BENCHMARK_NOTES.md); both are container-emulated observations, not bare-metal performance claims.
 
 The CLI accepts `--strategy busy`, `--strategy futex`, or `--strategy adaptive` on either endpoint. Adaptive mode uses `--spin-count` predicate checks before sleeping; busy mode ignores the spin count. The default remains `busy` for compatibility with the initial Phase 1 behavior. Strategies are chosen independently per process before it claims its role.
