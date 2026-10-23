@@ -29,7 +29,7 @@ Implement the broadcast SPMC contract in [PHASE3_DESIGN.md](PHASE3_DESIGN.md): s
 
 ## Phase 4: Failure recovery and lifecycle hardening
 
-Add fault injection, initialization/lifecycle hardening, operational inspection, and recovery policy only after invariants are documented.
+The recovery contract and fault model are documented in [PHASE4_DESIGN.md](PHASE4_DESIGN.md). Deterministic development-only fault injection and read-only roster inspection are implemented. The remaining gate is to exercise every persistent transition on native Linux x86-64, address any failures, and record the evidence before marking this phase complete.
 
 ## Phase 5: Performance engineering
 

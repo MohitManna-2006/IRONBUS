@@ -5,12 +5,14 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <fcntl.h>
 #include <limits>
 #include <new>
 #include <sstream>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <signal.h>
 #include <unistd.h>
 
 namespace ironbus {
@@ -30,6 +32,20 @@ constexpr std::size_t kCacheLine = 64;
 constexpr off_t kPublisherLockOffset = 0;
 constexpr off_t kRegistryLockOffset = 1;
 constexpr off_t kSubscriberLockBase = 16;
+
+// Deliberately private development hook. An exact environment-variable match
+// is required; normal runs never pause or exit at protocol boundaries.
+void fault_point(std::string_view name) {
+  const char *configured = std::getenv("IRONBUS_FAULT_POINT");
+  if (configured == nullptr || name != configured)
+    return;
+  const char *action = std::getenv("IRONBUS_FAULT_ACTION");
+  if (action != nullptr && std::string_view(action) == "pause") {
+    (void)raise(SIGSTOP);
+  } else {
+    _exit(86);
+  }
+}
 
 struct alignas(kCacheLine) Cursor {
   std::atomic<std::uint64_t> value{0};
@@ -198,6 +214,17 @@ void unlock_role(int fd, off_t offset) noexcept {
   (void)fcntl(fd, F_OFD_SETLK, &lock);
 }
 
+bool role_is_locked(int fd, off_t offset) {
+  struct flock lock {};
+  lock.l_type = F_WRLCK;
+  lock.l_whence = SEEK_SET;
+  lock.l_start = offset;
+  lock.l_len = 1;
+  if (fcntl(fd, F_OFD_GETLK, &lock) != 0)
+    throw Error(ErrorCode::system, os_error("inspect role lock"));
+  return lock.l_type != F_UNLCK;
+}
+
 class ScopedFileLock {
 public:
   ScopedFileLock(int fd, off_t offset, std::string_view busy_message, bool wait = true)
@@ -296,8 +323,10 @@ Bus Bus::create(std::string_view name, std::uint32_t capacity, std::uint32_t max
     throw Error(ErrorCode::system, os_error("create shared memory (already exists?)"));
   impl->cleanup_created = true;
   impl->created_name = path;
+  fault_point("create_after_open");
   if (ftruncate(impl->fd, static_cast<off_t>(bytes)) != 0)
     throw Error(ErrorCode::system, os_error("size shared memory"));
+  fault_point("create_after_size");
   impl->mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, impl->fd, 0);
   if (impl->mapping == MAP_FAILED)
     throw Error(ErrorCode::system, os_error("map shared memory"));
@@ -324,7 +353,9 @@ Bus Bus::create(std::string_view name, std::uint32_t capacity, std::uint32_t max
                                                       h->subscribers_offset);
   for (std::uint32_t i = 0; i < max_subscribers; ++i)
     new (&entries[i]) SubscriberEntry;
+  fault_point("create_before_ready");
   h->state.store(kReady, std::memory_order_release);
+  fault_point("create_after_ready");
   impl->cleanup_created = false;
   return Bus(std::move(impl));
 }
@@ -454,11 +485,13 @@ void Bus::claim(Role role, std::string_view subscriber_id) {
         continue;
       }
       entry.metadata.state.store(kMemberInitializing, std::memory_order_relaxed);
+      fault_point("member_initializing");
       entry.metadata.id_size = static_cast<std::uint32_t>(subscriber_id.size());
       std::memset(entry.metadata.id, 0, sizeof(entry.metadata.id));
       std::memcpy(entry.metadata.id, subscriber_id.data(), subscriber_id.size());
       entry.acknowledged.value.store(start_sequence, std::memory_order_relaxed);
       entry.metadata.state.store(kMemberRegistered, std::memory_order_release);
+      fault_point("member_registered");
       impl_->member_slot = i;
       impl_->member = &entry;
       impl_->pending =
@@ -556,12 +589,29 @@ Stats Bus::stats() const {
   auto *entries = impl_->subscribers();
   ScopedFileLock registry(impl_->fd, kRegistryLockOffset,
                           "unable to take a subscriber statistics snapshot");
-  return {h->published.value.load(std::memory_order_acquire),
-          minimum_acknowledged(h, entries),
-          h->capacity,
-          h->slot_size,
-          h->registered_subscribers.load(std::memory_order_acquire),
-          h->membership_state.load(std::memory_order_acquire) == kMembershipSealed};
+  Stats result{};
+  result.published = h->published.value.load(std::memory_order_acquire);
+  result.acknowledged = minimum_acknowledged(h, entries);
+  result.capacity = h->capacity;
+  result.slot_size = h->slot_size;
+  result.registered_subscribers = h->registered_subscribers.load(std::memory_order_acquire);
+  result.membership_sealed =
+      h->membership_state.load(std::memory_order_acquire) == kMembershipSealed;
+  result.publisher_active =
+      (impl_->role_claimed && impl_->role == Role::publisher) ||
+      role_is_locked(impl_->fd, kPublisherLockOffset);
+  for (std::uint32_t i = 0; i < h->max_subscribers; ++i) {
+    const auto &entry = entries[i];
+    if (entry.metadata.state.load(std::memory_order_acquire) != kMemberRegistered)
+      continue;
+    result.subscribers.push_back({std::string(entry.metadata.id, entry.metadata.id_size),
+                                  entry.acknowledged.value.load(std::memory_order_acquire),
+                                  (impl_->role_claimed && impl_->role == Role::subscriber &&
+                                   impl_->member_slot == i) ||
+                                      role_is_locked(impl_->fd, kSubscriberLockBase +
+                                                                 static_cast<off_t>(i))});
+  }
+  return result;
 }
 std::uint32_t Bus::capacity() const {
   return stats().capacity;
@@ -631,7 +681,9 @@ std::uint64_t Bus::publish(std::span<const std::byte> payload, std::chrono::mill
   slot.reserved = 0;
   if (!payload.empty())
     std::memcpy(slot.payload, payload.data(), payload.size());
+  fault_point("publish_before_commit");
   h->published.value.store(next, std::memory_order_release);
+  fault_point("publish_after_commit");
   h->data_generation.value.fetch_add(1, std::memory_order_release);
   detail::futex_wake_all(h->data_generation.value);
   return next;
@@ -682,7 +734,9 @@ void Bus::acknowledge(std::uint64_t sequence) {
       sequence > impl_->header->published.value.load(std::memory_order_acquire))
     throw Error(ErrorCode::invalid_argument,
                 "acknowledgement must match the next delivered sequence");
+  fault_point("ack_before_commit");
   impl_->member->acknowledged.value.store(sequence, std::memory_order_release);
+  fault_point("ack_after_commit");
   impl_->header->space_generation.value.fetch_add(1, std::memory_order_release);
   detail::futex_wake_one(impl_->header->space_generation.value);
   impl_->pending = sequence == std::numeric_limits<std::uint64_t>::max() ? 0 : sequence + 1;

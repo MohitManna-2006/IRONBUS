@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ironbus {
 
@@ -54,6 +55,13 @@ struct Stats {
   std::uint32_t slot_size{};
   std::uint32_t registered_subscribers{};
   bool membership_sealed{};
+  bool publisher_active{};
+  struct Subscriber {
+    std::string id;
+    std::uint64_t acknowledged{};
+    bool active{};
+  };
+  std::vector<Subscriber> subscribers;
 };
 
 enum class Role { publisher, subscriber };

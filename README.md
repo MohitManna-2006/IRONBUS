@@ -57,8 +57,11 @@ ctest --test-dir build-asan --output-on-failure
 ./build/ironbus sub --name demo --id strategy-b --count 100000
 # Later
 ./build/ironbus stats --name demo
+./build/ironbus inspect --name demo
 ./build/ironbus unlink --name demo
 ```
+
+`inspect` is read-only. It reports each registered subscriber's ACK cursor and whether its OFD role lock is held; an inactive lock does not remove the subscriber or release its retained backlog. Development fault injection is available only when a process is explicitly launched with `IRONBUS_FAULT_POINT` set to a named transition (`create_after_open`, `create_after_size`, `create_before_ready`, `create_after_ready`, `member_initializing`, `member_registered`, `publish_before_commit`, `publish_after_commit`, `ack_before_commit`, or `ack_after_commit`). By default the process exits with status 86; set `IRONBUS_FAULT_ACTION=pause` to stop it at that point for inspection. These environment variables are intended for controlled development experiments.
 
 The executable communicates **between actual processes** (not threads in a single executable). Register initial subscriber identities before first publication; first publish seals the initial roster. Without any subscriber, publish returns `no_subscribers` without advancing the sequence. A stalled reader retains its OFD role lock until it exits or closes its handle, and its persistent ACK cursor continues to gate ring reuse after a crash. Restart with the same `--id` to resume; use `ironbus forget --name demo --id strategy-a` only when publisher and target subscriber are stopped, understanding that this discards its backlog. No messages are silently dropped automatically.
 
@@ -135,4 +138,4 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 - **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
 - **Phase 6: Market-data integration** — typed market-data examples and integrations after transport and schema contracts stabilize.
 
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PLAN.md](docs/PLAN.md) for invariants and acceptance gates. On macOS, run `./scripts/linux-build.sh`; it builds in a Linux x86-64 container into `build-linux-x86_64`. Apple Silicon runs this through emulation, so use native Linux hardware for meaningful performance measurements. The native macOS build intentionally fails because Linux OFD locks are required.
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [PLAN.md](docs/PLAN.md), and [PHASE4_DESIGN.md](docs/PHASE4_DESIGN.md) for invariants and acceptance gates. On macOS, run `./scripts/linux-build.sh`; it builds in a Linux x86-64 container into `build-linux-x86_64`. Apple Silicon runs this through emulation, so use native Linux hardware for meaningful performance measurements. The native macOS build intentionally fails because Linux OFD locks are required.
