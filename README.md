@@ -4,7 +4,7 @@
 
 A Linux x86-64, C++20, cross-process shared-memory messaging system.
 
-> **Status: Phases 0–3 complete.** Phase 3 broadcast SPMC passed native Linux x86-64 Release and ASan/UBSan CI. Broker discovery and zero-copy payload views are not implemented.
+> **Status: Phases 0–4 complete; Phase 5 pending.** Phase 4 failure-recovery acceptance passed on native Linux x86-64 and its bounded acceptance checks are integrated into CI. Phase 5 remains pending controlled native performance baselines. Broker discovery and zero-copy payload views are not implemented.
 
 ## Why this exists
 
@@ -136,8 +136,8 @@ Messages already ACKed do not reappear. If a consumer is killed after receiving 
 - **Phase 1: Correct SPSC shared-memory IPC (complete)** — POSIX shared memory, fixed slots, acquire/release cursors, bounded backpressure, role locks, crash/redelivery behavior, CLI, subprocess tests, and an initial benchmark. All documented acceptance tests passed on Linux x86-64.
 - **Phase 2: Wakeup strategies and polling (complete)** — per-endpoint busy, Linux process-shared futex, and bounded adaptive spin-then-futex policies; CI acceptance passed.
 - **Phase 3: Multi-consumer architecture (complete)** — bounded broadcast SPMC, stable per-subscriber cursors, admission and explicit quiescent removal. Native Linux x86-64 Release and ASan/UBSan CI passed. See [PHASE3_DESIGN.md](docs/PHASE3_DESIGN.md).
-- **Phase 4: Failure recovery and lifecycle hardening** — fault injection, initialization/lifecycle hardening, operational inspection, and explicit recovery policy.
-- **Phase 5: Performance engineering** — cache-line contention, affinity, NUMA, and tail-latency profiling with reproducible bare-metal methodology.
+- **Phase 4: Failure recovery and lifecycle hardening (complete)** — 16/16 acceptance checks passed on Purdue's `eceprog3` Linux x86-64 server: all ten fault-injection transitions and six additional lifecycle/layout/inspection checks. Recovery preserved unacknowledged messages for redelivery. The acceptance scripts run in bounded Linux CI; see [PHASE4_DESIGN.md](docs/PHASE4_DESIGN.md).
+- **Phase 5: Performance engineering (pending)** — controlled native Linux baselines are still required before profiling cache-line contention, affinity, NUMA, and tail latency or making performance changes.
 - **Phase 6: Market-data integration** — typed market-data examples and integrations after transport and schema contracts stabilize.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [PLAN.md](docs/PLAN.md), and [PHASE4_DESIGN.md](docs/PHASE4_DESIGN.md) for invariants and acceptance gates. On macOS, run `./scripts/linux-build.sh`; it builds in a Linux x86-64 container into `build-linux-x86_64`. Apple Silicon runs this through emulation, so use native Linux hardware for meaningful performance measurements. The native macOS build intentionally fails because Linux OFD locks are required.

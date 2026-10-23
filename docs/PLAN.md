@@ -29,11 +29,11 @@ Implement the broadcast SPMC contract in [PHASE3_DESIGN.md](PHASE3_DESIGN.md): s
 
 ## Phase 4: Failure recovery and lifecycle hardening
 
-The recovery contract and fault model are documented in [PHASE4_DESIGN.md](PHASE4_DESIGN.md). Deterministic development-only fault injection and read-only roster inspection are implemented. The remaining gate is to exercise every persistent transition on native Linux x86-64, address any failures, and record the evidence before marking this phase complete.
+**Complete.** The recovery contract, fault model, acceptance scripts, and evidence boundary are documented in [PHASE4_DESIGN.md](PHASE4_DESIGN.md). The supplied native Linux x86-64 report records 16/16 acceptance checks passing on Purdue's `eceprog3`: all ten fault-injection transitions and six additional lifecycle/layout/inspection checks, including redelivery after a crash before ACK. The tested source tree is identified as commit `7063bcf733f7c0d71c2bbd8c7b558e87364c15a5`. The Phase 4 scripts are integrated into bounded Linux CI; CI runs validate the current checkout independently.
 
 ## Phase 5: Performance engineering
 
-The repeatable fanout/affinity/NUMA sweep runner and methodology are documented in [PHASE5_PERFORMANCE.md](PHASE5_PERFORMANCE.md). Native Linux baselines and measured, evidence-backed optimization remain the acceptance gate; container-emulated runs are not performance evidence.
+**Pending.** The repeatable fanout/affinity/NUMA sweep runner and methodology are documented in [PHASE5_PERFORMANCE.md](PHASE5_PERFORMANCE.md). Controlled native Linux baselines and measured, evidence-backed optimization remain the acceptance gate; container-emulated runs are not performance evidence.
 
 ## Phase 6: Market-data integration
 
